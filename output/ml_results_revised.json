@@ -1,0 +1,295 @@
+{
+  "feature_selection": {
+    "selected_features": [
+      "footprint_area",
+      "footprint_perimeter",
+      "compactness",
+      "rectangularity",
+      "mbr_length",
+      "mbr_width",
+      "building_height",
+      "orientation",
+      "longest_edge_length",
+      "vol_lod13"
+    ],
+    "dropped_features": [
+      "n_footprint_vertices",
+      "aspect_ratio",
+      "edge_length_ratio"
+    ],
+    "full_accuracy": 0.9050576752440106,
+    "reduced_accuracy": 0.906832298136646
+  },
+  "classifier_comparison": {
+    "Decision Tree": {
+      "accuracy": 0.8829787234042553,
+      "f1": 0.8826416029108838,
+      "cv_f1_mean": 0.8849592054526741,
+      "cv_f1_std": 0.004833122481664234,
+      "best_params": {
+        "class_weight": "balanced",
+        "max_depth": "None",
+        "min_samples_split": "2"
+      }
+    },
+    "Random Forest": {
+      "accuracy": 0.9219858156028369,
+      "f1": 0.9149908934480918,
+      "cv_f1_mean": 0.9138387919276838,
+      "cv_f1_std": 0.00571077242148326,
+      "best_params": {
+        "class_weight": "balanced",
+        "max_depth": "20",
+        "n_estimators": "200"
+      }
+    },
+    "Gradient Boosted Trees": {
+      "accuracy": 0.9243498817966903,
+      "f1": 0.9210036209066499,
+      "cv_f1_mean": 0.9145147849120026,
+      "cv_f1_std": 0.0023999007767017107,
+      "best_params": {
+        "learning_rate": "0.05",
+        "max_depth": "7",
+        "n_estimators": "200"
+      }
+    },
+    "K-Nearest Neighbors": {
+      "accuracy": 0.9278959810874704,
+      "f1": 0.9264028919081576,
+      "cv_f1_mean": 0.9074623099625706,
+      "cv_f1_std": 0.003909446577958759,
+      "best_params": {
+        "n_neighbors": "3",
+        "weights": "distance"
+      }
+    },
+    "MLP": {
+      "accuracy": 0.8711583924349882,
+      "f1": 0.8518415572414706,
+      "cv_f1_mean": 0.8666070294473303,
+      "cv_f1_std": 0.015468056286637354,
+      "best_params": {
+        "hidden_layer_sizes": "(128, 64, 32)",
+        "learning_rate_init": "0.005"
+      }
+    }
+  },
+  "best_classifier": {
+    "model": "K-Nearest Neighbors",
+    "n_features": 10,
+    "features_used": [
+      "footprint_area",
+      "footprint_perimeter",
+      "compactness",
+      "rectangularity",
+      "mbr_length",
+      "mbr_width",
+      "building_height",
+      "orientation",
+      "longest_edge_length",
+      "vol_lod13"
+    ],
+    "accuracy": 0.9278959810874704,
+    "f1": 0.9264028919081576,
+    "confusion_matrix": [
+      [
+        432,
+        7,
+        1
+      ],
+      [
+        19,
+        333,
+        14
+      ],
+      [
+        1,
+        19,
+        20
+      ]
+    ]
+  },
+  "vertex_prediction": {
+    "gabled": {
+      "Linear Regression": {
+        "mae": 0.04106670352920446,
+        "rmse": 0.08480265513022088,
+        "mae_per_dim": [
+          0.04106670352920446
+        ],
+        "n_train": 1948,
+        "n_test": 487,
+        "best_params": {}
+      },
+      "Decision Tree": {
+        "mae": 0.026917749883748242,
+        "rmse": 0.06559698569451414,
+        "mae_per_dim": [
+          0.026917749883748242
+        ],
+        "n_train": 1948,
+        "n_test": 487,
+        "best_params": {
+          "max_depth": "None",
+          "min_samples_split": "5"
+        },
+        "cv_mae": 0.027951918026540633
+      },
+      "Random Forest": {
+        "mae": 0.02220007791747814,
+        "rmse": 0.04893466142854375,
+        "mae_per_dim": [
+          0.02220007791747814
+        ],
+        "n_train": 1948,
+        "n_test": 487,
+        "best_params": {
+          "max_depth": "None",
+          "n_estimators": "200"
+        },
+        "cv_mae": 0.024482163512907263
+      },
+      "Gradient Boosted Trees": {
+        "mae": 0.021386102118809255,
+        "rmse": 0.04760870129294623,
+        "mae_per_dim": [
+          0.021386102118809255
+        ],
+        "n_train": 1948,
+        "n_test": 487,
+        "best_params": {
+          "estimator__learning_rate": "0.1",
+          "estimator__max_depth": "7",
+          "estimator__n_estimators": "200"
+        },
+        "cv_mae": 0.023739428517083463
+      },
+      "MLP-Small (64-32)": {
+        "mae": 0.039161011847370954,
+        "rmse": 0.07970125464778356,
+        "mae_per_dim": [
+          0.039161011847370954
+        ],
+        "n_train": 1948,
+        "n_test": 487,
+        "best_params": {
+          "learning_rate_init": "0.001"
+        },
+        "cv_mae": 0.034365207507230225
+      },
+      "MLP-Large (128-64-32)": {
+        "mae": 0.035689622089239995,
+        "rmse": 0.07544993931707895,
+        "mae_per_dim": [
+          0.035689622089239995
+        ],
+        "n_train": 1948,
+        "n_test": 487,
+        "best_params": {
+          "learning_rate_init": "0.005"
+        },
+        "cv_mae": 0.03411951348970772
+      }
+    },
+    "hipped": {
+      "Linear Regression": {
+        "mae": 0.08195904770259928,
+        "rmse": 0.11760775848296401,
+        "mae_per_dim": [
+          0.07310097904060049,
+          0.10719043010541579,
+          0.03960791684603553,
+          0.10793686481834529
+        ],
+        "n_train": 214,
+        "n_test": 54,
+        "best_params": {}
+      },
+      "Decision Tree": {
+        "mae": 0.08826181930869414,
+        "rmse": 0.13728948872043492,
+        "mae_per_dim": [
+          0.07952432610544904,
+          0.12454421096007148,
+          0.04397306631464359,
+          0.10500567385461246
+        ],
+        "n_train": 214,
+        "n_test": 54,
+        "best_params": {
+          "max_depth": "5",
+          "min_samples_split": "5"
+        },
+        "cv_mae": 0.07943506028632616
+      },
+      "Random Forest": {
+        "mae": 0.07730198623730548,
+        "rmse": 0.11719000843013759,
+        "mae_per_dim": [
+          0.06938009051589564,
+          0.10869129509674415,
+          0.0368923305723731,
+          0.09424422876420906
+        ],
+        "n_train": 214,
+        "n_test": 54,
+        "best_params": {
+          "max_depth": "10",
+          "n_estimators": "200"
+        },
+        "cv_mae": 0.07567647107833557
+      },
+      "Gradient Boosted Trees": {
+        "mae": 0.0814208560280763,
+        "rmse": 0.12036362909900868,
+        "mae_per_dim": [
+          0.07394672203567355,
+          0.11271663514487182,
+          0.03716496379922481,
+          0.10185510313253505
+        ],
+        "n_train": 214,
+        "n_test": 54,
+        "best_params": {
+          "estimator__learning_rate": "0.05",
+          "estimator__max_depth": "3",
+          "estimator__n_estimators": "100"
+        },
+        "cv_mae": 0.07936132762264726
+      },
+      "MLP-Small (64-32)": {
+        "mae": 0.08146178231062812,
+        "rmse": 0.11518007005849198,
+        "mae_per_dim": [
+          0.07132289842391228,
+          0.1088607266860774,
+          0.042960390660026396,
+          0.1027031134724964
+        ],
+        "n_train": 214,
+        "n_test": 54,
+        "best_params": {
+          "learning_rate_init": "0.001"
+        },
+        "cv_mae": 0.07514625581715387
+      },
+      "MLP-Large (128-64-32)": {
+        "mae": 0.07934312825176591,
+        "rmse": 0.11321869395276815,
+        "mae_per_dim": [
+          0.07342604882944022,
+          0.10563669973376467,
+          0.0419742425748399,
+          0.09633552186901888
+        ],
+        "n_train": 214,
+        "n_test": 54,
+        "best_params": {
+          "learning_rate_init": "0.001"
+        },
+        "cv_mae": 0.07252864241016364
+      }
+    }
+  }
+}
