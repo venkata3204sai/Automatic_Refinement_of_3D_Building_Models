@@ -17,10 +17,10 @@ This script:
 import sys
 import os
 import json
-import warnings
 import numpy as np
 
-warnings.filterwarnings('ignore')
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

@@ -153,51 +153,38 @@ def construct_gabled_roof(ground_verts: List[Tuple],
     """
     Construct LOD2.2 geometry for a GABLED roof on a rectangular footprint.
 
-    Ridge XY coordinates are computed by the pipeline (MBR-based) and passed
-    in directly. Face construction uses a side-of-ridge-line test to classify
-    edges as long (parallel to ridge) or short (gable ends).
+    Uses cross-product side-of-ridge-line test to classify edges:
+    - Vertices on opposite sides of ridge → gable-end edge (short)
+    - Vertices on same side → long edge (parallel to ridge)
 
-    For a 4-vertex rectangle this always produces:
-    - 2 long edges → 2 roof slope quads + 2 rectangular walls
-    - 2 short edges → 2 pentagon gable walls
-    - 1 ground face
-    Total: 7 faces (1 ground + 2 roof + 4 wall)
+    This is robust for any rectangle orientation, including near-square
+    buildings where edge-length sorting would be ambiguous.
+
+    Produces: 1 ground + 2 roof slopes + 2 rectangular walls + 2 pentagon
+    gable walls = 7 faces.
     """
     n = len(eave_verts)
-    ridge_z = ridge_v1[2]
 
-    # Ridge direction (from the provided ridge vertices)
-    ridge_dx = ridge_v2[0] - ridge_v1[0]
-    ridge_dy = ridge_v2[1] - ridge_v1[1]
-    ridge_len = math.sqrt(ridge_dx**2 + ridge_dy**2)
-
-    if ridge_len < 0.01:
-        ridge_dx, ridge_dy, ridge_len = 1.0, 0.0, 1.0
-
-    # Classify each eave vertex as side_a (+) or side_b (-) of the ridge line
-    vertex_sides = []
-    for ev in eave_verts:
-        cross = (ridge_dx * (ev[1] - ridge_v1[1]) -
-                 ridge_dy * (ev[0] - ridge_v1[0]))
-        vertex_sides.append('a' if cross >= 0 else 'b')
-
-    # Also classify edges using the ridge direction for face construction
-    edge_types = []
-    for i in range(n):
-        j = (i + 1) % n
-        if vertex_sides[i] != vertex_sides[j]:
-            # Vertices on opposite sides of ridge → this is a gable-end edge
-            edge_types.append('short')
-        else:
-            # Both vertices on same side → long edge (parallel to ridge)
-            edge_types.append('long')
-
-    # Build vertex list
     all_vertices = list(ground_verts) + list(eave_verts) + [ridge_v1, ridge_v2]
     ground_idx = list(range(n))
     eave_idx = list(range(n, 2 * n))
     r1_idx = 2 * n
     r2_idx = 2 * n + 1
+
+    # Ridge direction from provided ridge vertices
+    ridge_dx = ridge_v2[0] - ridge_v1[0]
+    ridge_dy = ridge_v2[1] - ridge_v1[1]
+    ridge_len = math.sqrt(ridge_dx**2 + ridge_dy**2)
+
+    if ridge_len < 0.01:
+        ridge_dx, ridge_dy = 1.0, 0.0
+
+    # Classify each eave vertex as side_a (+) or side_b (-) of ridge line
+    vertex_sides = []
+    for ev in eave_verts:
+        cross = (ridge_dx * (ev[1] - ridge_v1[1]) -
+                 ridge_dy * (ev[0] - ridge_v1[0]))
+        vertex_sides.append('a' if cross >= 0 else 'b')
 
     faces = []
     semantics = []
@@ -206,16 +193,15 @@ def construct_gabled_roof(ground_verts: List[Tuple],
     faces.append(list(reversed(ground_idx)))
     semantics.append('GroundSurface')
 
-    # Second pass: build faces
     for i in range(n):
         j = (i + 1) % n
 
-        if edge_types[i] == 'long':
-            # ─── Long edge: Roof slope quad + rectangular wall ───
+        if vertex_sides[i] == vertex_sides[j]:
+            # Same side → long edge: roof slope + rectangular wall
             edge_mid = ((eave_verts[i][0] + eave_verts[j][0]) / 2,
                         (eave_verts[i][1] + eave_verts[j][1]) / 2)
-            cross = ((ridge_v2[0] - ridge_v1[0]) * (edge_mid[1] - ridge_v1[1]) -
-                     (ridge_v2[1] - ridge_v1[1]) * (edge_mid[0] - ridge_v1[0]))
+            cross = (ridge_dx * (edge_mid[1] - ridge_v1[1]) -
+                     ridge_dy * (edge_mid[0] - ridge_v1[0]))
 
             if cross >= 0:
                 slope = [eave_idx[j], eave_idx[i], r1_idx, r2_idx]
@@ -227,10 +213,8 @@ def construct_gabled_roof(ground_verts: List[Tuple],
             wall = [ground_idx[i], ground_idx[j], eave_idx[j], eave_idx[i]]
             faces.append(wall)
             semantics.append('WallSurface')
-
         else:
-            # ─── Short edge: Pentagon gable wall ───
-            # Find which ridge vertex is closest to this edge's midpoint
+            # Opposite sides → gable-end edge: pentagon wall
             edge_mid = ((eave_verts[i][0] + eave_verts[j][0]) / 2,
                         (eave_verts[i][1] + eave_verts[j][1]) / 2)
             d1 = distance_2d(edge_mid, ridge_v1)
@@ -241,7 +225,7 @@ def construct_gabled_roof(ground_verts: List[Tuple],
             faces.append(pentagon)
             semantics.append('WallSurface')
 
-    # ─── Fix face normals ───
+    # Fix face normals
     centroid = (
         sum(v[0] for v in all_vertices) / len(all_vertices),
         sum(v[1] for v in all_vertices) / len(all_vertices),
@@ -266,15 +250,11 @@ def construct_hipped_roof(ground_verts: List[Tuple],
     """
     Construct LOD2.2 geometry for a HIPPED roof on a rectangular footprint.
 
-    Uses side-of-ridge-line classification (same as gabled) to determine
-    edge types. Short edges get triangular hip roof faces instead of
-    pentagon gable walls.
+    Uses cross-product side-of-ridge-line test (same as gabled).
+    Short edges get triangular hip roof faces instead of pentagon gable walls.
 
-    For a 4-vertex rectangle this always produces:
-    - 2 long edges → 2 trapezoid roof slopes + 2 rectangular walls
-    - 2 short edges → 2 triangular hip roof faces + 2 rectangular walls
-    - 1 ground face
-    Total: 9 faces (1 ground + 4 roof + 4 wall)
+    Produces: 1 ground + 2 trapezoid roof slopes + 2 triangular hip roof
+    faces + 4 rectangular walls = 9 faces.
     """
     n = len(eave_verts)
 
@@ -284,6 +264,21 @@ def construct_hipped_roof(ground_verts: List[Tuple],
     r1_idx = 2 * n
     r2_idx = 2 * n + 1
 
+    # Ridge direction
+    ridge_dx = ridge_v2[0] - ridge_v1[0]
+    ridge_dy = ridge_v2[1] - ridge_v1[1]
+    ridge_len = math.sqrt(ridge_dx**2 + ridge_dy**2)
+
+    if ridge_len < 0.01:
+        ridge_dx, ridge_dy = 1.0, 0.0
+
+    # Classify vertices by side of ridge line
+    vertex_sides = []
+    for ev in eave_verts:
+        cross = (ridge_dx * (ev[1] - ridge_v1[1]) -
+                 ridge_dy * (ev[0] - ridge_v1[0]))
+        vertex_sides.append('a' if cross >= 0 else 'b')
+
     faces = []
     semantics = []
 
@@ -291,29 +286,15 @@ def construct_hipped_roof(ground_verts: List[Tuple],
     faces.append(list(reversed(ground_idx)))
     semantics.append('GroundSurface')
 
-    ridge_dx = ridge_v2[0] - ridge_v1[0]
-    ridge_dy = ridge_v2[1] - ridge_v1[1]
-    ridge_len = math.sqrt(ridge_dx**2 + ridge_dy**2)
-
-    if ridge_len < 0.01:
-        ridge_dx, ridge_dy, ridge_len = 1.0, 0.0, 1.0
-
-    # Classify each eave vertex as side_a or side_b of the ridge line
-    vertex_sides = []
-    for ev in eave_verts:
-        cross = (ridge_dx * (ev[1] - ridge_v1[1]) -
-                 ridge_dy * (ev[0] - ridge_v1[0]))
-        vertex_sides.append('a' if cross >= 0 else 'b')
-
     for i in range(n):
         j = (i + 1) % n
 
         if vertex_sides[i] == vertex_sides[j]:
-            # Both vertices on same side → long edge: trapezoid roof slope + wall
+            # Same side → long edge: trapezoid roof slope + wall
             edge_mid = ((eave_verts[i][0] + eave_verts[j][0]) / 2,
                         (eave_verts[i][1] + eave_verts[j][1]) / 2)
-            cross = ((ridge_v2[0] - ridge_v1[0]) * (edge_mid[1] - ridge_v1[1]) -
-                     (ridge_v2[1] - ridge_v1[1]) * (edge_mid[0] - ridge_v1[0]))
+            cross = (ridge_dx * (edge_mid[1] - ridge_v1[1]) -
+                     ridge_dy * (edge_mid[0] - ridge_v1[0]))
 
             if cross >= 0:
                 slope = [eave_idx[j], eave_idx[i], r1_idx, r2_idx]
@@ -322,30 +303,26 @@ def construct_hipped_roof(ground_verts: List[Tuple],
             faces.append(slope)
             semantics.append('RoofSurface')
 
-            # Rectangular wall below
             wall = [ground_idx[i], ground_idx[j], eave_idx[j], eave_idx[i]]
             faces.append(wall)
             semantics.append('WallSurface')
-
         else:
-            # Vertices on opposite sides → short edge: triangular hip roof + wall
+            # Opposite sides → short edge: triangular hip roof + wall
             edge_mid = ((eave_verts[i][0] + eave_verts[j][0]) / 2,
                         (eave_verts[i][1] + eave_verts[j][1]) / 2)
             d1 = distance_2d(edge_mid, ridge_v1)
             d2 = distance_2d(edge_mid, ridge_v2)
             closest = r1_idx if d1 < d2 else r2_idx
 
-            # Triangular hip roof face
             hip = [eave_idx[j], eave_idx[i], closest]
             faces.append(hip)
             semantics.append('RoofSurface')
 
-            # Rectangular wall below
             wall = [ground_idx[i], ground_idx[j], eave_idx[j], eave_idx[i]]
             faces.append(wall)
             semantics.append('WallSurface')
 
-    # ─── Fix face normals: ensure all faces point outward ───
+    # Fix face normals
     centroid = (
         sum(v[0] for v in all_vertices) / len(all_vertices),
         sum(v[1] for v in all_vertices) / len(all_vertices),
@@ -542,24 +519,48 @@ def build_lod22_cityjson(buildings: List[dict],
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Ridge XY Computation (Bug 2+4 fix)
+# Ridge XY Computation (symmetric rectangle assumptions)
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _get_long_axis(footprint_2d: list) -> Tuple[Tuple, Tuple, float, float]:
+    """
+    Find the long axis of a rectangular footprint.
+
+    Returns:
+        (ridge_dir, perp_dir, long_len, short_len)
+        where ridge_dir is the unit vector along the long edge,
+        perp_dir is perpendicular, and lengths are edge lengths.
+    """
+    n = len(footprint_2d)
+    edges = []
+    for i in range(n):
+        j = (i + 1) % n
+        dx = footprint_2d[j][0] - footprint_2d[i][0]
+        dy = footprint_2d[j][1] - footprint_2d[i][1]
+        length = math.sqrt(dx * dx + dy * dy)
+        edges.append((length, dx, dy, i))
+
+    edges.sort(key=lambda e: e[0], reverse=True)
+    long_len = edges[0][0]
+    short_len = edges[1][0] if len(edges) > 1 else long_len
+
+    if long_len < 0.01:
+        return (1.0, 0.0), (0.0, 1.0), 1.0, 1.0
+
+    ridge_dir = (edges[0][1] / long_len, edges[0][2] / long_len)
+    perp_dir = (-ridge_dir[1], ridge_dir[0])
+
+    return ridge_dir, perp_dir, long_len, short_len
+
 
 def _compute_gabled_ridge_xy(eave_verts: List[Tuple],
                               footprint_2d: list,
                               ridge_z: float) -> Tuple[Tuple, Tuple]:
     """
-    Compute gabled ridge vertex XY positions from the footprint geometry
-    using the MBR (minimum bounding rectangle) approach.
+    Compute gabled ridge vertex XY positions for a symmetric rectangle.
 
-    Steps:
-    1. Finds the longest edge of the footprint → ridge direction
-    2. Projects all footprint vertices onto the perpendicular axis
-    3. Places ridge vertices at the midpoint of the two extremes
-       along the perpendicular axis, at each end of the long axis
-
-    Currently used with 4-vertex rectangular footprints. The MBR-based
-    approach generalises to non-rectangular footprints if needed in future.
+    The ridge runs along the long axis, centered on the short axis.
+    Ridge endpoints are at the midpoints of the two short edges.
 
     Args:
         eave_verts: eave-level vertices with Z coordinates
@@ -570,56 +571,82 @@ def _compute_gabled_ridge_xy(eave_verts: List[Tuple],
         (ridge_v1, ridge_v2) — two 3D tuples
     """
     n = len(footprint_2d)
+    ridge_dir, perp_dir, _, _ = _get_long_axis(footprint_2d)
 
-    # Step 1: Find the longest edge → this defines the ridge direction
-    best_dx, best_dy, best_len = 1.0, 0.0, 0.0
-    for i in range(n):
-        j = (i + 1) % n
-        ex = footprint_2d[j][0] - footprint_2d[i][0]
-        ey = footprint_2d[j][1] - footprint_2d[i][1]
-        elen = math.sqrt(ex * ex + ey * ey)
-        if elen > best_len:
-            best_len = elen
-            best_dx = ex / elen
-            best_dy = ey / elen
-
-    # Ridge direction (along long axis) and perpendicular direction
-    ridge_dir = (best_dx, best_dy)
-    perp_dir = (-best_dy, best_dx)
-
-    # Step 2: Project all footprint vertices onto both axes
-    # to find the extent of the building along each direction
     centroid_x = sum(p[0] for p in footprint_2d) / n
     centroid_y = sum(p[1] for p in footprint_2d) / n
 
-    ridge_projections = []
-    perp_projections = []
+    # Project vertices onto the long axis to find the endpoints
+    projections = []
     for px, py in footprint_2d:
-        dx = px - centroid_x
-        dy = py - centroid_y
-        # Project onto ridge direction (long axis)
-        ridge_proj = dx * ridge_dir[0] + dy * ridge_dir[1]
-        ridge_projections.append(ridge_proj)
-        # Project onto perpendicular direction (short axis)
-        perp_proj = dx * perp_dir[0] + dy * perp_dir[1]
-        perp_projections.append(perp_proj)
+        proj = (px - centroid_x) * ridge_dir[0] + (py - centroid_y) * ridge_dir[1]
+        projections.append(proj)
 
-    # Step 3: Ridge endpoints are at the min/max of the ridge-direction projection
-    # (i.e., at the two "short ends" of the building), centered on the perpendicular axis
-    min_ridge = min(ridge_projections)
-    max_ridge = max(ridge_projections)
-    perp_center = (min(perp_projections) + max(perp_projections)) / 2
+    min_proj = min(projections)
+    max_proj = max(projections)
 
-    # Convert back to world coordinates
-    r1_x = centroid_x + min_ridge * ridge_dir[0] + perp_center * perp_dir[0]
-    r1_y = centroid_y + min_ridge * ridge_dir[1] + perp_center * perp_dir[1]
-    r2_x = centroid_x + max_ridge * ridge_dir[0] + perp_center * perp_dir[0]
-    r2_y = centroid_y + max_ridge * ridge_dir[1] + perp_center * perp_dir[1]
+    # Ridge endpoints: at the long-axis extremes, centered on perpendicular
+    r1_x = centroid_x + min_proj * ridge_dir[0]
+    r1_y = centroid_y + min_proj * ridge_dir[1]
+    r2_x = centroid_x + max_proj * ridge_dir[0]
+    r2_y = centroid_y + max_proj * ridge_dir[1]
 
-    ridge_v1 = (r1_x, r1_y, ridge_z)
-    ridge_v2 = (r2_x, r2_y, ridge_z)
+    return (r1_x, r1_y, ridge_z), (r2_x, r2_y, ridge_z)
 
-    return ridge_v1, ridge_v2
+
+def _compute_hipped_ridge_xy(eave_verts: List[Tuple],
+                              footprint_2d: list,
+                              ridge_z: float,
+                              inset_ratio: float) -> Tuple[Tuple, Tuple]:
+    """
+    Compute hipped ridge vertex XY positions for a symmetric rectangle.
+
+    Same as gabled, but the ridge endpoints are inset from the short edges
+    by inset_ratio × building_length on each side.
+
+    Args:
+        eave_verts: eave-level vertices with Z coordinates
+        footprint_2d: list of (x, y) footprint coordinates
+        ridge_z: predicted ridge height
+        inset_ratio: fraction of building length to inset from each end
+                     (0 = full gable, 0.5 = pyramid)
+
+    Returns:
+        (ridge_v1, ridge_v2) — two 3D tuples
+    """
+    n = len(footprint_2d)
+    ridge_dir, perp_dir, _, _ = _get_long_axis(footprint_2d)
+
+    centroid_x = sum(p[0] for p in footprint_2d) / n
+    centroid_y = sum(p[1] for p in footprint_2d) / n
+
+    # Project vertices onto the long axis
+    projections = []
+    for px, py in footprint_2d:
+        proj = (px - centroid_x) * ridge_dir[0] + (py - centroid_y) * ridge_dir[1]
+        projections.append(proj)
+
+    min_proj = min(projections)
+    max_proj = max(projections)
+    building_length = max_proj - min_proj
+
+    # Inset the ridge endpoints
+    inset = building_length * inset_ratio
+    r1_proj = min_proj + inset
+    r2_proj = max_proj - inset
+
+    # Safety: ensure ridge has positive length
+    if r1_proj >= r2_proj:
+        mid = (min_proj + max_proj) / 2
+        r1_proj = mid - 0.1
+        r2_proj = mid + 0.1
+
+    r1_x = centroid_x + r1_proj * ridge_dir[0]
+    r1_y = centroid_y + r1_proj * ridge_dir[1]
+    r2_x = centroid_x + r2_proj * ridge_dir[0]
+    r2_y = centroid_y + r2_proj * ridge_dir[1]
+
+    return (r1_x, r1_y, ridge_z), (r2_x, r2_y, ridge_z)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -765,25 +792,27 @@ def run_construction_pipeline(parser,
                 if prediction:
                     new_ridge_z = prediction['ridge_height']
 
-                    # Bug 1 fix: Keep eave at original LOD1.3 top — don't lower it.
-                    # The ridge goes ABOVE the existing eave; we don't modify eave_verts.
-                    new_ridge_z = max(lod13_top_z + 0.5, new_ridge_z)
+                    # ─── Geometric validity checks ───
+                    # Ridge must be above eave (LOD1.3 top)
+                    min_ridge_z = lod13_top_z + 0.3
+                    # Ridge should not exceed 2× building height above ground
+                    max_ridge_z = ground_z_val + building_h * 2.0
+                    # Ridge should add at least a reasonable slope
+                    # (min ~5° on the short side → min_rise = short_side/2 * tan(5°))
+                    new_ridge_z = max(min_ridge_z, min(max_ridge_z, new_ridge_z))
 
                     if roof_type == 'gabled':
-                        # Bug 2+4 fix: Compute ridge XY here from the footprint
-                        # using MBR-based approach, not placeholder (0,0).
-                        # Find the two shortest edges (gable ends) and place
-                        # ridge vertices above their midpoints.
+                        # Ridge at short-edge midpoints, centered
                         ridge_v1, ridge_v2 = _compute_gabled_ridge_xy(
                             eave_verts, footprint_2d, new_ridge_z
                         )
 
                     elif roof_type == 'hipped':
-                        # HIPPED: ML predicts full ridge vertex positions
-                        ridge_v1 = prediction['ridge_vertices'][0]
-                        ridge_v2 = prediction['ridge_vertices'][1]
-                        ridge_v1 = (ridge_v1[0], ridge_v1[1], new_ridge_z)
-                        ridge_v2 = (ridge_v2[0], ridge_v2[1], new_ridge_z)
+                        # Ridge inset from short edges by predicted ratio
+                        inset_ratio = prediction.get('ridge_inset_ratio', 0.15)
+                        ridge_v1, ridge_v2 = _compute_hipped_ridge_xy(
+                            eave_verts, footprint_2d, new_ridge_z, inset_ratio
+                        )
 
             if ridge_v1 is None:
                 roof_type = 'flat'

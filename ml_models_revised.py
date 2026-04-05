@@ -316,6 +316,17 @@ class RoofVertexPredictor:
 
     MAX_FOOTPRINT_VERTICES = 4  # Fixed: rectangular footprints only
 
+    # Simplified input features for symmetric rectangular buildings.
+    # The footprint shape is fully described by aspect_ratio + area;
+    # raw vertex coordinates are redundant for rectangles.
+    INPUT_FEATURES = [
+        'aspect_ratio',       # length/width ratio — key shape descriptor
+        'footprint_area',     # absolute size (normalized by scale²)
+        'building_height',    # absolute height (normalized by scale)
+        'mbr_length',         # long side (normalized by scale)
+        'mbr_width',          # short side (normalized by scale)
+    ]
+
     def __init__(self, random_state=42):
         self.random_state = random_state
         self.models = {}       # {roof_type: model}
@@ -405,19 +416,17 @@ class RoofVertexPredictor:
     def _build_input_vector(self, features: dict,
                             footprint_2d: list) -> Optional[np.ndarray]:
         """
-        Build the normalized input vector for a building.
+        Build the normalized input vector for a rectangular building.
 
-        For rectangular (4-vertex) footprints, the input contains:
-        - 8 values: normalized footprint vertices (4 × XY)
-        - 5 values: normalized_area, aspect_ratio, normalized_height,
-                     mbr_length/scale, mbr_width/scale
+        For symmetric rectangular footprints, the building shape is fully
+        described by 5 features: aspect_ratio, normalized_area,
+        normalized_height, normalized_length, normalized_width.
 
-        Total: 13 inputs. Each input varies across buildings — constants
-        and redundant features (n_vertices, compactness, rectangularity,
-        edge_length_ratio, orientation) have been removed.
+        All spatial features are normalized by the larger MBR dimension
+        to make the model scale-invariant.
+
+        Total: 5 inputs.
         """
-        centroid_x = features.get('centroid_x', 0)
-        centroid_y = features.get('centroid_y', 0)
         mbr_length = features.get('mbr_length', 1)
         mbr_width = features.get('mbr_width', 1)
         building_height = features.get('building_height', 1)
@@ -425,24 +434,16 @@ class RoofVertexPredictor:
         if mbr_length <= 0 or mbr_width <= 0 or building_height <= 0:
             return None
 
-        # Normalize footprint: center at origin, scale by MBR dimensions
-        scale_xy = max(mbr_length, mbr_width)
-        norm_footprint = []
-        for px, py in footprint_2d[:self.MAX_FOOTPRINT_VERTICES]:
-            nx = (px - centroid_x) / scale_xy
-            ny = (py - centroid_y) / scale_xy
-            norm_footprint.extend([nx, ny])
+        scale = max(mbr_length, mbr_width)
 
-        # Geometric features (only those that vary across rectangular buildings)
-        extra_features = [
-            features.get('footprint_area', 0) / (scale_xy ** 2),  # normalized area
+        input_vec = np.array([
             features.get('aspect_ratio', 1),
-            building_height / scale_xy,           # normalized height
-            features.get('mbr_length', 0) / scale_xy,
-            features.get('mbr_width', 0) / scale_xy,
-        ]
+            features.get('footprint_area', 0) / (scale ** 2),
+            building_height / scale,
+            mbr_length / scale,
+            mbr_width / scale,
+        ], dtype=np.float64)
 
-        input_vec = np.array(norm_footprint + extra_features, dtype=np.float64)
         return input_vec
 
     def _build_target_vector(self, features: dict, roof_params: dict,
@@ -451,52 +452,43 @@ class RoofVertexPredictor:
         """
         Build the normalized target vector.
 
-        GABLED: Only ridge_z (1 value) — ridge XY is determined by footprint
-        HIPPED: Full prediction — ridge_cx, ridge_cy, ridge_z, ridge_half_len (4 values)
+        Assumes symmetric rectangular buildings:
+        GABLED: 1 output — ridge_height_ratio (ridge_z relative to building)
+        HIPPED: 2 outputs — ridge_height_ratio + ridge_inset_ratio
+                (how far ridge endpoints are inset from short edges,
+                 as a fraction of the building's long-axis length)
 
-        All coordinates normalized relative to the building.
+        All values are dimensionless ratios, making them scale-invariant.
         """
         building_height = features.get('building_height', 1)
         ground_z = features.get('ground_z', 0)
+        mbr_length = features.get('mbr_length', 1)
 
         ridge_height = roof_params.get('ridge_height', None)
-        if ridge_height is None:
+        if ridge_height is None or building_height <= 0:
             return None
 
-        # Normalized ridge z (height above ground, scaled by building height)
-        norm_ridge_z = (ridge_height - ground_z) / building_height if building_height > 0 else 0
+        # Ridge height as ratio of building height (typically 1.0-1.3)
+        ridge_height_ratio = (ridge_height - ground_z) / building_height
 
         if roof_type == 'gabled':
-            # Gabled: only predict ridge height
-            # Ridge XY will be computed from footprint geometry during construction
-            target = np.array([norm_ridge_z], dtype=np.float64)
+            target = np.array([ridge_height_ratio], dtype=np.float64)
 
         elif roof_type == 'hipped':
-            # Hipped: predict full ridge position and length
-            centroid_x = features.get('centroid_x', 0)
-            centroid_y = features.get('centroid_y', 0)
-            mbr_length = features.get('mbr_length', 1)
-            mbr_width = features.get('mbr_width', 1)
-            scale_xy = max(mbr_length, mbr_width)
-
-            ridge_x = roof_params.get('ridge_x', None)
-            ridge_y = roof_params.get('ridge_y', None)
+            # Compute ridge inset: how far the ridge endpoints are from
+            # the short edges, as a fraction of the long-axis length.
+            # inset_ratio = 0 means ridge spans full length (= gabled)
+            # inset_ratio = 0.5 means ridge is a single point (= pyramid)
             ridge_length = roof_params.get('ridge_length', None)
 
-            if ridge_x is None or ridge_y is None:
-                return None
-
-            norm_ridge_x = (ridge_x - centroid_x) / scale_xy
-            norm_ridge_y = (ridge_y - centroid_y) / scale_xy
-
-            if ridge_length is not None:
-                norm_ridge_half_len = (ridge_length / 2) / scale_xy
+            if ridge_length is not None and mbr_length > 0:
+                ridge_inset_ratio = (mbr_length - ridge_length) / (2 * mbr_length)
+                ridge_inset_ratio = max(0.0, min(0.5, ridge_inset_ratio))
             else:
-                norm_ridge_half_len = mbr_length / (4 * scale_xy)
+                ridge_inset_ratio = 0.15  # reasonable default
 
-            target = np.array([
-                norm_ridge_x, norm_ridge_y, norm_ridge_z, norm_ridge_half_len
-            ], dtype=np.float64)
+            target = np.array([ridge_height_ratio, ridge_inset_ratio],
+                              dtype=np.float64)
 
         else:
             return None
@@ -710,8 +702,8 @@ class RoofVertexPredictor:
                     self.results[roof_type][name]['cv_mae'] = float(cv_score)
 
                 dim_labels_map = {
-                    'gabled': ['ridge_z'],
-                    'hipped': ['ridge_cx', 'ridge_cy', 'ridge_z', 'ridge_half_len'],
+                    'gabled': ['ridge_height_ratio'],
+                    'hipped': ['ridge_height_ratio', 'ridge_inset_ratio'],
                 }
                 dim_labels = dim_labels_map.get(roof_type, [f'dim{i}' for i in range(len(mae_per_dim))])
                 print(f"\n  {name}:")
@@ -760,8 +752,12 @@ class RoofVertexPredictor:
         """
         Predict roof parameters for a new building.
 
-        GABLED: Returns only ridge_z — ridge XY computed by construction module
-        HIPPED: Returns full ridge vertex positions
+        ML predicts minimal parameters; geometry does the rest:
+        GABLED: predicts ridge_height_ratio → construction places ridge at
+                short-edge midpoints at the predicted height
+        HIPPED: predicts ridge_height_ratio + ridge_inset_ratio →
+                construction places ridge along long axis, inset from
+                short edges by the predicted amount
 
         Args:
             features: dict of LOD1.3 features
@@ -769,7 +765,7 @@ class RoofVertexPredictor:
             roof_type: predicted roof type
 
         Returns:
-            dict with 'ridge_height' and optionally 'ridge_vertices'
+            dict with 'ridge_height' and for hipped also 'ridge_inset_ratio'
         """
         if roof_type not in self.models or self.models[roof_type] is None:
             return None
@@ -800,70 +796,28 @@ class RoofVertexPredictor:
         ground_z = features.get('ground_z', 0)
         building_height = features.get('building_height', 1)
 
+        # Ridge height (same for both gabled and hipped)
+        ridge_height_ratio = float(prediction[0])
+        ridge_z = ridge_height_ratio * building_height + ground_z
+
+        # Clamp: ridge must be above eave, at most 2× building height
+        eave_z = ground_z + building_height
+        ridge_z = max(eave_z + 0.3, min(eave_z + building_height, ridge_z))
+
         if roof_type == 'gabled':
-            # Gabled: only ridge_z predicted
-            ridge_z = float(prediction[0]) * building_height + ground_z
-
-            # Clamp ridge height
-            eave_z = ground_z + building_height
-            ridge_z = max(eave_z, min(eave_z + building_height, ridge_z))
-
             return {
                 'ridge_height': ridge_z,
                 'normalized_prediction': prediction.tolist()
             }
 
         elif roof_type == 'hipped':
-            # Hipped: full prediction — ridge_cx, ridge_cy, ridge_z, ridge_half_len
-            centroid_x = features.get('centroid_x', 0)
-            centroid_y = features.get('centroid_y', 0)
-            mbr_length = features.get('mbr_length', 1)
-            mbr_width = features.get('mbr_width', 1)
-            scale_xy = max(mbr_length, mbr_width)
-
-            ridge_cx = prediction[0] * scale_xy + centroid_x
-            ridge_cy = prediction[1] * scale_xy + centroid_y
-            ridge_z = prediction[2] * building_height + ground_z
-            ridge_half_len = abs(prediction[3]) * scale_xy
-
-            # Compute ridge direction from longest footprint edge
-            best_dx, best_dy, best_len = 1.0, 0.0, 0.0
-            for k in range(len(footprint_2d)):
-                next_k = (k + 1) % len(footprint_2d)
-                ex = footprint_2d[next_k][0] - footprint_2d[k][0]
-                ey = footprint_2d[next_k][1] - footprint_2d[k][1]
-                elen = math.sqrt(ex * ex + ey * ey)
-                if elen > best_len:
-                    best_len = elen
-                    best_dx = ex / elen
-                    best_dy = ey / elen
-
-            dx = best_dx * ridge_half_len
-            dy = best_dy * ridge_half_len
-
-            # Clamp ridge center
-            max_offset = scale_xy * 0.3
-            ridge_cx = max(centroid_x - max_offset, min(centroid_x + max_offset, ridge_cx))
-            ridge_cy = max(centroid_y - max_offset, min(centroid_y + max_offset, ridge_cy))
-
-            # Clamp ridge half length
-            max_half_len = mbr_length * 0.6
-            ridge_half_len = min(ridge_half_len, max_half_len)
-            dx = best_dx * ridge_half_len
-            dy = best_dy * ridge_half_len
-
-            # Clamp ridge height
-            eave_z = ground_z + building_height
-            ridge_z = max(eave_z, min(eave_z + building_height, ridge_z))
-
-            ridge_v1 = (ridge_cx - dx, ridge_cy - dy, ridge_z)
-            ridge_v2 = (ridge_cx + dx, ridge_cy + dy, ridge_z)
+            # Ridge inset ratio (0 = full length, 0.5 = pyramid)
+            ridge_inset_ratio = float(prediction[1]) if len(prediction) > 1 else 0.15
+            ridge_inset_ratio = max(0.02, min(0.48, ridge_inset_ratio))
 
             return {
-                'ridge_vertices': [ridge_v1, ridge_v2],
-                'ridge_center': (ridge_cx, ridge_cy, ridge_z),
-                'ridge_length': ridge_half_len * 2,
                 'ridge_height': ridge_z,
+                'ridge_inset_ratio': ridge_inset_ratio,
                 'normalized_prediction': prediction.tolist()
             }
 
