@@ -1,40 +1,27 @@
 """
-=============================================================================
-Run Full Pipeline: Train + Construct LOD2.2
-=============================================================================
+End-to-end entry point: load tiles, train the classifier and vertex
+predictor, run geometric construction, and write LOD2.2 CityJSON output.
+
 Usage:
     python run_full_pipeline.py tile1.city.json tile2.city.json ...
-
-This script:
-  1. Loads CityJSON tiles
-  2. Extracts features and ground truth
-  3. Trains classifier (Stage 1) and vertex predictor (Stage 2)
-  4. Runs geometric construction on all buildings
-  5. Exports LOD2.2 CityJSON output
-=============================================================================
 """
 
 import sys
 import os
-import json
-import numpy as np
-
 import warnings
-warnings.filterwarnings("ignore", category=UserWarning)
+
+warnings.filterwarnings('ignore')
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from cityjson_parser import CityJSONParser
-from feature_extraction import process_tile, filter_buildings
-from ml_models_revised import (
-    FeatureSelector, RoofVertexPredictor,
-    run_revised_pipeline
-)
+from feature_extraction import process_tile, filter_buildings, compute_neighbor_features
+from ml_models_revised import run_revised_pipeline
 from roof_construction import run_construction_pipeline
 
 
 def main(filepaths: list):
-    # ─── Step 1: Load tiles and prepare data ───
+    # Step 1: load tiles and prepare data
     print(f"\n{'█'*70}")
     print(f"  STEP 1: LOADING DATA")
     print(f"{'█'*70}")
@@ -52,9 +39,16 @@ def main(filepaths: list):
         parsers.append(parser)
 
     filtered = filter_buildings(all_building_data)
+
+    # Step 1b: compute neighbor features using ground-truth labels
+    print(f"\n{'█'*70}")
+    print(f"  STEP 1b: COMPUTING NEIGHBOR FEATURES")
+    print(f"{'█'*70}")
+    filtered = compute_neighbor_features(filtered, radius=50.0, use_ground_truth=True)
+
     print(f"\nTotal buildings for training: {len(filtered)}")
 
-    # ─── Step 2: Train models ───
+    # Step 2: train models
     print(f"\n{'█'*70}")
     print(f"  STEP 2: TRAINING MODELS")
     print(f"{'█'*70}")
@@ -66,7 +60,7 @@ def main(filepaths: list):
     vertex_predictor = pipeline_result['vertex_predictor']
     selected_features = pipeline_result['selected_features']
 
-    # ─── Step 3: Run construction on each tile ───
+    # Step 3: run construction on each tile
     print(f"\n{'█'*70}")
     print(f"  STEP 3: CONSTRUCTING LOD2.2 BUILDINGS")
     print(f"{'█'*70}")

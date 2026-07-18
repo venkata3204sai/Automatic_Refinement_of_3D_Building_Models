@@ -1,3 +1,0 @@
-python run_full_pipeline.py data/9-564-628.city.json data/9-564-632.city.json data/9-564-636.city.json data/9-568-628.city.json data/9-568-632.city.json data/9-568-636.city.json data/9-572-628.city.json data/9-572-632.city.json data/9-572-636.city.json
-
-python run_full_pipeline.py data/9-564-628.city.json

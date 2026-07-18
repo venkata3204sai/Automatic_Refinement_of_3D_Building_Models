@@ -1,0 +1,13 @@
+# Core dependencies for the LOD1.3 -> LOD2.2 roof reconstruction pipeline.
+# Tested with Python 3.14 (Anaconda).
+#
+# Install:  pip install -r requirements.txt
+#   (or, with conda:  conda install numpy scikit-learn)
+
+numpy>=1.26
+scikit-learn>=1.4
+
+# Optional: only needed if you use the NetworkX conversion helpers in
+# graph_representation.py (to_networkx / from_networkx). The core pipeline
+# runs without it.
+# networkx>=3.0

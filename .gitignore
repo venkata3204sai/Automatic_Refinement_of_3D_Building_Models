@@ -1,0 +1,40 @@
+# ─── Python ───
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ─── Virtual environments ───
+.venv/
+venv/
+env/
+ENV/
+
+# ─── Data & pipeline outputs ───
+# 3DBAG CityJSON input tiles and generated LOD2.2 / evaluation results
+# are not versioned. Download tiles from https://3dbag.nl and regenerate
+# outputs with the pipeline (see README).
+data/
+output/
+
+# ─── Editors / OS ───
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ─── Office temp/lock files ───
+~$*
+
+# ─── Personal scratch files ───
+run command copy.txt
+
+# ─── Thesis working assets ───
+# Raw presentation/asset folder. Curated figures used by the README live in
+# docs/figures/ (tracked); the bulky source folder is not versioned.
+other-files/

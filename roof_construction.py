@@ -1,53 +1,36 @@
 """
-=============================================================================
-Module 5: Geometric Roof Construction (Weeks 8-9)
-=============================================================================
-Takes ML predictions (roof type + ridge vertex positions) and constructs
-valid LOD2.2 CityJSON geometry from LOD1.3 input.
+Geometric Roof Construction
 
-Scope: Rectangular (4-vertex) footprints only. The pipeline filters to
-n_footprint_vertices == 4 before construction, ensuring clean geometry
-for the three supported roof types.
+Takes the ML predictions (roof type + ridge parameters) and deterministically
+builds valid LOD2.2 CityJSON geometry from the LOD1.3 footprint. Rectangular
+(4-vertex) footprints only — the pipeline filters to n_footprint_vertices == 4
+before this module ever runs.
 
-For each roof type, deterministic construction rules produce:
-  - Correct 3D faces (roof slopes, gable walls, ground, walls)
-  - Semantic surface labels (RoofSurface, WallSurface, GroundSurface)
-  - Valid CityJSON Solid geometry
+Each roof type has its own construction rule, producing the right 3D faces,
+semantic surface labels (RoofSurface/WallSurface/GroundSurface), and a valid
+CityJSON Solid:
 
-Construction per roof type:
-  FLAT:    Keep LOD1.3 box, add semantic labels
-  GABLED:  Add 2 ridge vertices above short-edge midpoints →
-           2 sloped RoofSurfaces + 2 pentagon gable WallSurfaces
-           + 2 rectangular side WallSurfaces + 1 GroundSurface
-  HIPPED:  Add 2 ridge vertices along the long axis →
-           4 sloped RoofSurfaces + 4 rectangular WallSurfaces
-           + 1 GroundSurface
+  FLAT:   keep the LOD1.3 box, just relabel the faces
+  GABLED: 2 ridge vertices above the short-edge midpoints -> 2 sloped
+          RoofSurfaces + 2 pentagon gable WallSurfaces + 2 rectangular side
+          WallSurfaces + 1 GroundSurface
+  HIPPED: 2 ridge vertices inset along the long axis -> 4 sloped
+          RoofSurfaces + 4 rectangular WallSurfaces + 1 GroundSurface
 
-Edge classification uses a side-of-ridge-line test (cross product)
-rather than dot-product thresholds, which is robust for rectangles.
-
-The eave height is kept at the original LOD1.3 top Z — only the
-ridge is placed above it based on ML predictions.
-=============================================================================
+Edges are classified by which side of the ridge line their endpoints fall
+on (a cross-product test), which holds up better for rectangles than a
+dot-product angle threshold. The eave height always stays at the original
+LOD1.3 top Z — only the ridge moves, based on the ML prediction.
 """
 
 import math
 import json
-from typing import Dict, List, Tuple, Optional, Any
+from typing import List, Tuple, Optional
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Geometry Helpers
-# ─────────────────────────────────────────────────────────────────────────────
 
 def distance_2d(p1, p2):
     """2D distance between two points (ignoring z)."""
     return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Face Normal Helper
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _ensure_outward_normal(face_indices: List[int], all_vertices: List[Tuple],
                            centroid: Tuple) -> List[int]:
@@ -81,19 +64,12 @@ def _ensure_outward_normal(face_indices: List[int], all_vertices: List[Tuple],
     return face_indices
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Roof Constructors
-# ─────────────────────────────────────────────────────────────────────────────
-
 def construct_flat_roof(ground_verts: List[Tuple],
                         eave_verts: List[Tuple]) -> dict:
     """
-    Construct LOD2.2 geometry for a FLAT roof.
-
-    The geometry is essentially the same as LOD1.3 but with semantic labels:
-    - 1 GroundSurface (bottom face)
-    - 1 RoofSurface (top face — flat)
-    - N WallSurfaces (side faces)
+    Construct LOD2.2 geometry for a flat roof — essentially the LOD1.3 box
+    with semantic labels added: 1 GroundSurface, 1 RoofSurface (the flat
+    top face), N WallSurfaces (the sides).
 
     Args:
         ground_verts: list of (x, y, z) for ground footprint
@@ -128,7 +104,7 @@ def construct_flat_roof(ground_verts: List[Tuple],
         faces.append(wall)
         semantics.append('WallSurface')
 
-    # ─── Fix face normals: ensure all faces point outward ───
+    # Fix face normals: ensure all faces point outward
     centroid = (
         sum(v[0] for v in all_vertices) / len(all_vertices),
         sum(v[1] for v in all_vertices) / len(all_vertices),
@@ -340,10 +316,7 @@ def construct_hipped_roof(ground_verts: List[Tuple],
     }
 
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CityJSON Output Builder
-# ─────────────────────────────────────────────────────────────────────────────
+# --- CityJSON output builder ---
 
 def to_cityjson_geometry(construction_result: dict,
                          scale: List[float] = None,
@@ -518,9 +491,7 @@ def build_lod22_cityjson(buildings: List[dict],
     return cityjson
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Ridge XY Computation (symmetric rectangle assumptions)
-# ─────────────────────────────────────────────────────────────────────────────
+# --- ridge XY computation (assumes a symmetric rectangle) ---
 
 def _get_long_axis(footprint_2d: list) -> Tuple[Tuple, Tuple, float, float]:
     """
@@ -649,9 +620,7 @@ def _compute_hipped_ridge_xy(eave_verts: List[Tuple],
     return (r1_x, r1_y, ridge_z), (r2_x, r2_y, ridge_z)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# End-to-End Pipeline Integration
-# ─────────────────────────────────────────────────────────────────────────────
+# --- end-to-end pipeline integration ---
 
 def run_construction_pipeline(parser,
                               classifier,
@@ -660,22 +629,27 @@ def run_construction_pipeline(parser,
                               selected_features: list,
                               output_path: Optional[str] = None) -> dict:
     """
-    Run the complete end-to-end pipeline:
-      CityJSON LOD1.3 → Feature Extraction → Classification →
-      Vertex Prediction → Geometric Construction → CityJSON LOD2.2
+    Run the complete end-to-end pipeline with two-pass classification:
+
+      Phase 1: Extract LOD1.3 features for all buildings
+      Phase 2: Pass 1 classification (geometric features only)
+      Phase 3: Compute neighbor features using Pass 1 predictions
+      Phase 4: Pass 2 classification (with neighbor context)
+      Phase 5: Vertex prediction + geometric construction
+      Phase 6: Build CityJSON output
     """
     import warnings
     warnings.filterwarnings('ignore')
     import numpy as np
-    from feature_extraction import extract_lod13_features
+    from feature_extraction import extract_lod13_features, compute_neighbor_features
 
     paired = parser.pair_lod13_lod22()
     stats = {'total': 0, 'flat': 0, 'gabled': 0, 'hipped': 0,
              'skipped': 0, 'fallback_flat': 0}
 
-    # ─── Phase 1: Extract features for all buildings ───
+    # Phase 1: extract features for all buildings
     print(f"  Extracting features from {len(paired)} buildings...")
-    valid_buildings = []  # list of (paired_entry, features, feature_vec)
+    valid_buildings = []  # list of (paired_entry, features)
 
     for p in paired:
         lod13 = p['lod13']
@@ -693,21 +667,7 @@ def run_construction_pipeline(parser,
             stats['skipped'] += 1
             continue
 
-        # Build feature vector for classifier
-        feature_vec = []
-        valid = True
-        for key in selected_features:
-            val = features.get(key)
-            if val is None:
-                valid = False
-                break
-            feature_vec.append(float(val))
-
-        if not valid:
-            stats['skipped'] += 1
-            continue
-
-        valid_buildings.append((p, features, feature_vec))
+        valid_buildings.append((p, features))
 
     print(f"  Valid buildings: {len(valid_buildings)}, Skipped: {stats['skipped']}")
 
@@ -715,22 +675,104 @@ def run_construction_pipeline(parser,
         print("  No valid buildings to process!")
         return {'cityjson': {}, 'stats': stats, 'buildings': []}
 
-    # ─── Phase 2: Batch classification (all at once — no per-building warnings) ───
-    print(f"  Running batch classification...")
-    X_all = np.array([b[2] for b in valid_buildings])
-    roof_types_encoded = classifier.predict(X_all)
-    roof_types = label_encoder.inverse_transform(roof_types_encoded)
+    # Phase 2: Pass 1 classification (without neighbor features)
+    # Build feature vectors using only the features that are available
+    # (neighbor features won't be present yet — they get default 0/None
+    # which the feature vector builder skips)
+    print(f"  Pass 1: Classifying with geometric features...")
+
+    # For Pass 1, build feature vectors; missing neighbor features get defaults
+    X_pass1 = []
+    pass1_valid_mask = []
+    for _, features in valid_buildings:
+        feature_vec = []
+        valid = True
+        for key in selected_features:
+            val = features.get(key)
+            if val is None:
+                # Neighbor features won't exist yet — use neutral defaults
+                if key == 'n_neighbors':
+                    val = 0
+                elif key.startswith('neighbor_mean_'):
+                    val = features.get('building_height', 0) if 'height' in key else features.get('footprint_area', 0)
+                elif key.startswith('neighbor_frac_'):
+                    val = 0.33
+                else:
+                    valid = False
+                    break
+            feature_vec.append(float(val))
+        X_pass1.append(feature_vec)
+        pass1_valid_mask.append(valid)
+
+    X_pass1 = np.array(X_pass1)
+    pass1_encoded = classifier.predict(X_pass1)
+    pass1_types = label_encoder.inverse_transform(pass1_encoded)
+
+    pass1_counts = {}
+    for rt in pass1_types:
+        pass1_counts[rt] = pass1_counts.get(rt, 0) + 1
+    print(f"    Pass 1 predictions: {pass1_counts}")
+
+    # Phase 3: compute neighbor features using Pass 1 predictions
+    print(f"  Computing neighbor features from Pass 1 predictions...")
+    building_data_for_neighbors = []
+    for idx, (p, features) in enumerate(valid_buildings):
+        building_data_for_neighbors.append({
+            'features': features,
+            'predicted_roof_type': pass1_types[idx],
+        })
+
+    compute_neighbor_features(building_data_for_neighbors,
+                              radius=50.0, use_ground_truth=False)
+
+    # Phase 4: Pass 2 classification (with neighbor context + confidence)
+    print(f"  Pass 2: Re-classifying with neighbor context...")
+    confidence_threshold = 0.0  # Only flip if Pass 2 confidence exceeds this
+
+    X_pass2 = []
+    for idx, (_, features) in enumerate(valid_buildings):
+        feature_vec = []
+        for key in selected_features:
+            val = features.get(key)
+            if val is None:
+                val = 0.0
+            feature_vec.append(float(val))
+        X_pass2.append(feature_vec)
+
+    X_pass2 = np.array(X_pass2)
+    pass2_proba = classifier.predict_proba(X_pass2)
+    pass2_encoded = np.argmax(pass2_proba, axis=1)
+    pass2_types = label_encoder.inverse_transform(pass2_encoded)
+
+    # Apply confidence gating: only accept Pass 2 if confident enough
+    roof_types = []
+    n_kept_pass1 = 0
+    for idx in range(len(pass1_types)):
+        pass2_type = pass2_types[idx]
+        pass2_conf = pass2_proba[idx].max()
+
+        if pass1_types[idx] != pass2_type and pass2_conf < confidence_threshold:
+            # Not confident enough to flip — keep Pass 1
+            roof_types.append(pass1_types[idx])
+            n_kept_pass1 += 1
+        else:
+            roof_types.append(pass2_type)
 
     type_counts = {}
     for rt in roof_types:
         type_counts[rt] = type_counts.get(rt, 0) + 1
-    print(f"  Predicted: {type_counts}")
+    print(f"    Pass 2 predictions: {type_counts}")
 
-    # ─── Phase 3: Vertex prediction + construction ───
+    # Show how many changed from Pass 1 to Pass 2
+    changed = sum(1 for p1, p2 in zip(pass1_types, roof_types) if p1 != p2)
+    print(f"    Changed from Pass 1 → Pass 2: {changed}/{len(roof_types)}")
+    print(f"    Blocked by confidence threshold ({confidence_threshold}): {n_kept_pass1}")
+
+    # Phase 5: vertex prediction + construction
     print(f"  Constructing LOD2.2 geometry...")
     buildings_for_output = []
 
-    for idx, (p, features, _) in enumerate(valid_buildings):
+    for idx, (p, features) in enumerate(valid_buildings):
         roof_type = roof_types[idx]
         vertices = parser.vertices
 
@@ -740,12 +782,12 @@ def run_construction_pipeline(parser,
         ground_verts = [tuple(vertices[i]) for i in footprint_indices]
         eave_verts = [tuple(vertices[i]) for i in top_indices]
 
-        # ─── Safety check: ground and eave must have same vertex count ───
+        # Safety check: ground and eave must have the same vertex count
         if len(ground_verts) != len(eave_verts):
             stats['skipped'] += 1
             continue
 
-        # ─── Reorder eave vertices to match ground vertex order ───
+        # Reorder eave vertices to match ground vertex order.
         # Each eave vertex should be directly above its corresponding ground vertex.
         # The CityJSON top face may list vertices in a different order than the ground face.
         reordered_eave = []
@@ -792,7 +834,7 @@ def run_construction_pipeline(parser,
                 if prediction:
                     new_ridge_z = prediction['ridge_height']
 
-                    # ─── Geometric validity checks ───
+                    # Geometric validity checks:
                     # Ridge must be above eave (LOD1.3 top)
                     min_ridge_z = lod13_top_z + 0.3
                     # Ridge should not exceed 2× building height above ground
@@ -825,6 +867,7 @@ def run_construction_pipeline(parser,
             'building_id': p['building_id'],
             'part_id': p['part_id'],
             'roof_type': roof_type,
+            'pass1_roof_type': pass1_types[idx],
             'ground_verts': ground_verts,
             'eave_verts': eave_verts,
             'ridge_v1': ridge_v1,
@@ -836,7 +879,7 @@ def run_construction_pipeline(parser,
         if (idx + 1) % 500 == 0:
             print(f"    Processed {idx + 1}/{len(valid_buildings)} buildings...")
 
-    # ─── Phase 4: Build CityJSON output ───
+    # Phase 6: build CityJSON output
     print(f"  Building CityJSON output...")
     cityjson = build_lod22_cityjson(
         buildings_for_output,
@@ -856,15 +899,11 @@ def run_construction_pipeline(parser,
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Standalone Test
-# ─────────────────────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
-    # Test with simple synthetic buildings
+    # Sanity-check each constructor against simple synthetic buildings.
     print("Testing geometric construction with synthetic buildings...\n")
 
-    # ─── Test 1: Flat roof ───
+    # Test 1: flat roof
     ground = [(0, 0, 0), (10, 0, 0), (10, 8, 0), (0, 8, 0)]
     eave = [(0, 0, 6), (10, 0, 6), (10, 8, 6), (0, 8, 6)]
 
@@ -877,7 +916,7 @@ if __name__ == "__main__":
     assert result['semantics'].count('RoofSurface') == 1
     print(f"  ✓ Correct: 6 faces, 1 RoofSurface\n")
 
-    # ─── Test 2: Gabled roof ───
+    # Test 2: gabled roof
     ridge_v1 = (0, 4, 10)  # ridge along x-axis at y=4 (center)
     ridge_v2 = (10, 4, 10)
 
@@ -892,7 +931,7 @@ if __name__ == "__main__":
     print(f"  RoofSurfaces: {n_roof}, WallSurfaces: {n_wall}, GroundSurfaces: {n_ground}")
     print(f"  ✓ Expected: 2 roof + ~6 wall (4 rect + 2 gable triangles) + 1 ground\n")
 
-    # ─── Test 3: Hipped roof ───
+    # Test 3: hipped roof
     ridge_v1_hip = (3, 4, 10)   # shorter ridge
     ridge_v2_hip = (7, 4, 10)
 
@@ -907,7 +946,7 @@ if __name__ == "__main__":
     print(f"  RoofSurfaces: {n_roof}, WallSurfaces: {n_wall}, GroundSurfaces: {n_ground}")
     print(f"  ✓ Expected: 4 roof + 4 wall + 1 ground\n")
 
-    # ─── Test 4: CityJSON export ───
+    # Test 4: CityJSON export
     print("Testing CityJSON export...")
     buildings = [
         {

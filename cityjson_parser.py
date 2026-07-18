@@ -6,9 +6,8 @@ and pairing LOD1.3/LOD2.2 building geometries.
 """
 
 import json
-import math
 import os
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Optional
 
 
 class CityJSONParser:
@@ -63,13 +62,7 @@ class CityJSONParser:
                 if v.get('type') == 'BuildingPart'}
 
     def get_building_with_parts(self, building_id: str) -> Optional[dict]:
-        """
-        Get a building and all its BuildingParts with geometry.
-
-        Returns:
-            dict with keys: 'building', 'parts', 'attributes'
-            or None if building not found
-        """
+        """Look up a building and its BuildingParts. None if the id isn't a Building."""
         building = self.city_objects.get(building_id)
         if not building or building.get('type') != 'Building':
             return None
@@ -88,16 +81,7 @@ class CityJSONParser:
         }
 
     def get_geometry_by_lod(self, city_object: dict, target_lod: str) -> Optional[dict]:
-        """
-        Extract geometry for a specific LOD from a CityObject.
-
-        Args:
-            city_object: A CityObject dict (typically a BuildingPart)
-            target_lod: LOD string, e.g., '1.3' or '2.2'
-
-        Returns:
-            The geometry dict or None if not found
-        """
+        """Return the geometry entry matching target_lod (e.g. '1.3', '2.2'), or None."""
         for geom in city_object.get('geometry', []):
             if geom.get('lod') == target_lod:
                 return geom
@@ -176,18 +160,12 @@ class CityJSONParser:
 
     def pair_lod13_lod22(self) -> List[dict]:
         """
-        Find all buildings that have BOTH LOD1.3 and LOD2.2 geometry.
+        Find every BuildingPart that has both a LOD1.3 and a LOD2.2 geometry
+        and pair them up. This is the link between model input (LOD1.3) and
+        ground truth (LOD2.2) that everything downstream depends on.
 
-        This is the key function for your thesis — it pairs the input (LOD1.3)
-        with the ground truth (LOD2.2) for each building.
-
-        Returns:
-            List of dicts, each containing:
-            - building_id: str
-            - part_id: str
-            - attributes: dict (from parent Building)
-            - lod13: geometry dict
-            - lod22: geometry dict
+        Each returned dict holds building_id, part_id, the parent building's
+        attributes, and the two geometry dicts (lod13, lod22).
         """
         paired = []
 
@@ -245,37 +223,6 @@ class CityJSONParser:
             print(f"  {key}: {val}")
 
         return summary
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Convenience function to load multiple tiles
-# ─────────────────────────────────────────────────────────────────────────────
-
-def load_tiles(filepaths: List[str]) -> List[CityJSONParser]:
-    """Load multiple CityJSON tiles."""
-    parsers = []
-    for fp in filepaths:
-        try:
-            parser = CityJSONParser(fp)
-            parser.summary()
-            parsers.append(parser)
-        except Exception as e:
-            print(f"Error loading {fp}: {e}")
-    return parsers
-
-
-def pair_all_buildings(parsers: List[CityJSONParser]) -> List[dict]:
-    """Pair LOD1.3/LOD2.2 buildings across all loaded tiles."""
-    all_paired = []
-    for parser in parsers:
-        pairs = parser.pair_lod13_lod22()
-        # Attach parser reference for vertex lookups
-        for p in pairs:
-            p['_parser'] = parser
-        all_paired.extend(pairs)
-
-    print(f"\nTotal paired buildings across {len(parsers)} tiles: {len(all_paired)}")
-    return all_paired
 
 
 if __name__ == "__main__":

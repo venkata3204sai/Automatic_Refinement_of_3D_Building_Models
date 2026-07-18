@@ -1,36 +1,28 @@
 """
-=============================================================================
-Module 4 (Revised): Improved ML Pipeline
-=============================================================================
-Changes based on supervisor feedback:
+ML pipeline: roof-type classification + ridge-parameter regression.
 
-1. FEATURE SELECTION for classification:
-   - ONLY features derivable from LOD1.3 geometry (no LiDAR/LOD2.2 data)
-   - Started with 13 pure LOD1.3 features, selection reduces further
-   - LOD2.2 data is ONLY used as ground-truth labels, never as input
+Two models, trained on the same LOD1.3-only feature set:
+  - FeatureSelector picks a compact subset of the 13 LOD1.3 geometric
+    features (+ 6 neighbor-context features) worth keeping for
+    classification.
+  - RoofVertexPredictor learns the ridge parameters (dimensionless ratios,
+    not absolute coordinates) needed to reconstruct gabled/hipped roofs.
 
-2. ROOF VERTEX PREDICTION using Neural Networks:
-   - Input: normalized LOD1.3 geometry (footprint vertices + building dims)
-   - Output: 3D coordinates of roof vertices to add
-   - All input features are LOD1.3-only
-
-3. DATA INTEGRITY:
-   - Input features: LOD1.3 geometry only (footprint shape, height, volume)
-   - Ground truth labels: from LOD2.2 (roof type, ridge vertex positions)
-   - This ensures the model can work on any LOD1.3 building without LiDAR
-=============================================================================
+Everything here is trained on LOD1.3 geometry alone — footprint shape,
+height, volume. LOD2.2 (roof type, ridge position) only ever supplies the
+labels, never a feature, so the same pipeline works on any LOD1.3 building
+with no LiDAR required.
 """
 
 import json
-import math
 import os
 import sys
 import warnings
-from typing import Dict, List, Tuple, Optional
+from typing import Optional
 
 import numpy as np
 from sklearn.model_selection import (
-    train_test_split, StratifiedKFold, cross_val_score, GridSearchCV
+    train_test_split, StratifiedKFold, GridSearchCV
 )
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.ensemble import (
@@ -43,60 +35,50 @@ from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
-from sklearn.feature_selection import (
-    SelectKBest, mutual_info_classif, mutual_info_regression
-)
+from sklearn.feature_selection import mutual_info_classif
 from sklearn.inspection import permutation_importance
 from sklearn.metrics import (
     accuracy_score, f1_score, classification_report, confusion_matrix,
-    mean_absolute_error, mean_squared_error, r2_score
+    mean_absolute_error, mean_squared_error
 )
 
 warnings.filterwarnings('ignore')
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# FEATURE SETS
-# ─────────────────────────────────────────────────────────────────────────────
-# IMPORTANT: Only features derivable from LOD1.3 geometry are used as input.
-# Features from 3DBAG attributes (h_dak_*, vol_lod22, vol_ratio, etc.) are
-# excluded because they are computed from LiDAR/LOD2.2 data, which would not
-# be available in a real deployment scenario.
-#
-# LOD2.2 data is ONLY used as ground-truth labels for training, never as input.
-# ─────────────────────────────────────────────────────────────────────────────
+# Feature sets. Only quantities derivable from LOD1.3 geometry are used as
+# input — 3DBAG attributes like h_dak_*, vol_lod22, vol_ratio are excluded
+# because they're computed from LiDAR/LOD2.2 data that wouldn't exist in a
+# real deployment scenario. LOD2.2 supplies labels only, never a feature.
 
-# Features computed purely from LOD1.3 geometry (13 features)
+# 13 LOD1.3 geometric features + 6 spatial neighbor-context features
 ALL_FEATURES = [
+    # LOD1.3 geometric features
     'footprint_area', 'footprint_perimeter', 'n_footprint_vertices',
     'aspect_ratio', 'compactness', 'rectangularity',
     'mbr_length', 'mbr_width', 'edge_length_ratio',
     'building_height',
     'orientation', 'longest_edge_length',
-    'vol_lod13'
+    'vol_lod13',
+    # Spatial neighbor context features
+    'n_neighbors',
+    'neighbor_mean_height', 'neighbor_mean_area',
+    'neighbor_frac_flat', 'neighbor_frac_gabled', 'neighbor_frac_hipped',
 ]
 
-# Features that were REMOVED because they leak LOD2.2/LiDAR information:
-# h_dak_min, h_dak_max, h_dak_50p, h_dak_70p  (roof height stats from LiDAR)
-# height_range, height_std_proxy               (derived from h_dak_* above)
-# vol_lod22, vol_ratio, vol_difference         (use LOD2.2 volume)
+# Excluded for leaking LOD2.2/LiDAR information into what should be an
+# LOD1.3-only input: h_dak_min/max/50p/70p (LiDAR roof-height stats),
+# height_range/height_std_proxy (derived from those), vol_lod22/vol_ratio/
+# vol_difference (use the LOD2.2 volume).
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-# PART 1: FEATURE SELECTION FOR CLASSIFICATION
-# ═════════════════════════════════════════════════════════════════════════════
 
 class FeatureSelector:
     """
-    Identifies which features are necessary for roof type classification
-    and which can be dropped without hurting performance.
-
-    Uses three methods:
-    1. Tree-based feature importance (from Random Forest)
-    2. Permutation importance (model-agnostic)
-    3. Mutual information (statistical dependency)
-
-    Then validates by comparing full vs reduced feature set accuracy.
+    Figures out which of the candidate features are actually worth keeping
+    for roof-type classification, combining three angles so no single
+    method's blind spots dominate: Random Forest importance (tree-based),
+    permutation importance (model-agnostic), and mutual information
+    (pure statistical dependency). Validates the result by comparing full
+    vs. reduced feature set accuracy.
     """
 
     def __init__(self, random_state=42):
@@ -124,7 +106,7 @@ class FeatureSelector:
             random_state=self.random_state
         )
 
-        # ─── Method 1: Tree-based importance ───
+        # Method 1: tree-based importance
         print(f"\n--- Method 1: Random Forest Feature Importance ---")
         rf = RandomForestClassifier(
             n_estimators=200, max_depth=10, class_weight='balanced',
@@ -141,7 +123,7 @@ class FeatureSelector:
             marker = " ✓" if rf_importances[idx] >= 0.03 else " ✗"
             print(f"  {rank+1:<4} {feature_names[idx]:<25} {rf_importances[idx]:>10.4f}{marker}")
 
-        # ─── Method 2: Permutation importance ───
+        # Method 2: permutation importance
         print(f"\n--- Method 2: Permutation Importance ---")
         perm_result = permutation_importance(
             rf, X_test, y_test, n_repeats=20,
@@ -158,7 +140,7 @@ class FeatureSelector:
                   f"{perm_importances[idx]:>10.4f} "
                   f"{perm_result.importances_std[idx]:>8.4f}{marker}")
 
-        # ─── Method 3: Mutual information ───
+        # Method 3: mutual information
         print(f"\n--- Method 3: Mutual Information ---")
         mi_scores = mutual_info_classif(
             X_train, y_train, random_state=self.random_state
@@ -171,7 +153,7 @@ class FeatureSelector:
             marker = " ✓" if mi_scores[idx] >= 0.05 else " ✗"
             print(f"  {rank+1:<4} {feature_names[idx]:<25} {mi_scores[idx]:>10.4f}{marker}")
 
-        # ─── Consensus: Select features that appear important in ≥2 methods ───
+        # Consensus: keep features that at least 2 of the 3 methods rate highly
         print(f"\n--- Consensus Feature Selection ---")
 
         # Score each feature: how many methods rank it in the top half
@@ -227,7 +209,7 @@ class FeatureSelector:
             print(f"  ✗ {name:<25} score={info['total_score']} "
                   f"(RF rank:{info['rf_rank']}, Perm rank:{info['perm_rank']}, MI rank:{info['mi_rank']})")
 
-        # ─── Validate: Compare full vs reduced feature set ───
+        # Validate: does the reduced set actually cost us accuracy?
         print(f"\n--- Validation: Full vs Reduced Feature Set ---")
 
         selected_indices = [feature_names.index(name) for name in selected]
@@ -276,42 +258,25 @@ class FeatureSelector:
         return self.results
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# PART 2: NEURAL NETWORK ROOF VERTEX PREDICTION
-# ═════════════════════════════════════════════════════════════════════════════
-
 class RoofVertexPredictor:
     """
-    Predicts 3D positions of roof vertices given LOD1.3 building geometry.
+    Predicts where to place the ridge vertices on top of a building's
+    LOD1.3 box.
 
-    APPROACH (supervisor's suggestion):
-    - Treat the building as a solid (LOD1.3 box)
-    - The top face of the box = eave level
-    - Predict where to place ridge vertices ON TOP of this solid
-    - Use the footprint shape and building dimensions as input
+    The LOD1.3 solid's top face is treated as the eave level, and the model
+    predicts ridge placement above it from footprint shape and building
+    dimensions alone. Everything is normalized to a local coordinate system
+    (origin at the footprint centroid, coordinates scaled by building
+    dimensions) so the model doesn't care about a building's absolute size
+    or position — see _build_input_vector for the exact 5-feature vector.
 
-    INPUT REPRESENTATION:
-    We normalize the building to a local coordinate system:
-    - Origin at the footprint centroid
-    - Coordinates scaled by building dimensions
-    - This makes the network footprint-size invariant
+    Output is a small set of dimensionless ratios rather than raw
+    coordinates: one ridge-height ratio for gabled roofs, plus a ridge-inset
+    ratio for hipped roofs. Construction (roof_construction.py) converts
+    these back into real 3D vertices, denormalizing back to real coordinates.
 
-    The input vector contains:
-    - Normalized footprint vertices (x, y for each vertex, padded to max_vertices)
-    - Building height, eave height
-    - Footprint area, aspect ratio, compactness
-    - Number of footprint vertices
-
-    OUTPUT:
-    - For gabled: 2 ridge vertices (6 values: x1,y1,z1, x2,y2,z2)
-    - For hipped: 2 ridge endpoints (6 values: x1,y1,z1, x2,y2,z2)
-    - Coordinates are in the same normalized local system
-
-    After prediction, we denormalize back to real coordinates.
-
-    NOTE: Uses sklearn MLPRegressor. For your thesis, you should
-    upgrade to PyTorch for more flexibility (custom architectures,
-    batch normalization, dropout, etc.)
+    Six regressor families are compared (Section 3.5.2 of the thesis);
+    the "neural network" here is sklearn's MLPRegressor, not a deep net.
     """
 
     MAX_FOOTPRINT_VERTICES = 4  # Fixed: rectangular footprints only
@@ -337,20 +302,13 @@ class RoofVertexPredictor:
 
     def prepare_vertex_data(self, building_data: list, parser_map: dict = None) -> dict:
         """
-        Prepare training data for roof vertex prediction.
+        Build the (X, y) training arrays for the ridge regressor: normalized
+        LOD1.3 building geometry as input, normalized LOD2.2 ridge target
+        ratios as output, split out per roof_type since gabled and hipped
+        have different target dimensionality.
 
-        For each building:
-        1. Extract LOD1.3 top face vertices (normalized)
-        2. Extract LOD2.2 ridge vertices (normalized) as targets
-
-        Args:
-            building_data: list of building data dicts from feature_extraction
-            parser_map: dict mapping building_id to CityJSONParser
-                        (needed for vertex access)
-
-        Returns:
-            dict with {roof_type: {'X': input_array, 'y': target_array,
-                                    'meta': normalization_metadata}}
+        parser_map maps building_id -> CityJSONParser, needed to look up
+        vertex coordinates. Returns {roof_type: {'X', 'y', 'meta'}}.
         """
         datasets = {'gabled': {'X': [], 'y': [], 'meta': []},
                     'hipped': {'X': [], 'y': [], 'meta': []}}
@@ -371,12 +329,12 @@ class RoofVertexPredictor:
             if footprint_2d is None or len(footprint_2d) < 3:
                 continue
 
-            # ─── Build normalized input ───
+            # Build normalized input
             input_vec = self._build_input_vector(features, footprint_2d)
             if input_vec is None:
                 continue
 
-            # ─── Build normalized target (ridge vertex positions) ───
+            # Build normalized target (ridge vertex positions)
             target_vec = self._build_target_vector(features, roof_params, roof_type, footprint_2d)
             if target_vec is None:
                 continue
@@ -527,7 +485,7 @@ class RoofVertexPredictor:
                 X, y, test_size=0.2, random_state=self.random_state
             )
 
-            # ─── Define models ───
+            # Define models
             # Each entry: (model, needs_scaling, param_grid_for_cv)
             # Models with param grids get cross-validated tuning.
             # Models without just train directly.
@@ -726,7 +684,7 @@ class RoofVertexPredictor:
             self._best_needs_scaling[roof_type] = best_needs_scaling
             print(f"\n  ★ Best model for {roof_type}: {best_name} (MAE={best_mae:.4f})")
 
-            # ─── Detailed analysis of best model predictions ───
+            # Detailed analysis of best model predictions
             print(f"\n  --- Sample Predictions ({roof_type}) ---")
             if best_needs_scaling and roof_type in self.scalers_X:
                 X_test_scaled = self.scalers_X[roof_type].transform(X_test)
@@ -824,20 +782,14 @@ class RoofVertexPredictor:
         return None
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# COMPLETE REVISED PIPELINE
-# ═════════════════════════════════════════════════════════════════════════════
-
 def run_revised_pipeline(building_data: list, output_dir: str = "output"):
     """
-    Run the complete revised ML pipeline:
-    1. Feature selection for classification
-    2. Train classifier with reduced features
-    3. Train neural network for roof vertex prediction
+    End-to-end training: select features, fit the roof-type classifier on
+    the reduced set, then fit the ridge-parameter regressor.
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    # ─── Prepare classification data ───
+    # Prepare classification data
     X_rows = []
     y_class = []
     valid_buildings = []
@@ -863,11 +815,11 @@ def run_revised_pipeline(building_data: list, output_dir: str = "output"):
     print(f"\nDataset: {len(X)} buildings")
     print(f"Classes: { {c: int(np.sum(y == c)) for c in np.unique(y)} }")
 
-    # ═══ STEP 1: Feature Selection ═══
+    # Step 1: feature selection
     selector = FeatureSelector()
     selection_results = selector.analyze(X, y, ALL_FEATURES)
 
-    # ═══ STEP 2: Train and Compare Classifiers ═══
+    # Step 2: train and compare classifiers
     selected_features = selection_results['selected_features']
     selected_indices = selection_results['selected_indices']
     X_reduced = X[:, selected_indices]
@@ -888,7 +840,7 @@ def run_revised_pipeline(building_data: list, output_dir: str = "output"):
     X_train_s = scaler.fit_transform(X_train)
     X_test_s = scaler.transform(X_test)
 
-    # ─── Define models with hyperparameter grids for GridSearchCV ───
+    # Define models with hyperparameter grids for GridSearchCV
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
     classifier_configs = {
@@ -990,7 +942,7 @@ def run_revised_pipeline(building_data: list, output_dir: str = "output"):
 
     print(f"\n  ★ Best classifier: {best_clf_name} (Test F1={best_clf_f1:.4f})")
 
-    # ─── Final evaluation of best classifier ───
+    # Final evaluation of best classifier
     X_te_final = X_test_s if best_clf_needs_scaling else X_test
     y_pred_final = best_clf.predict(X_te_final)
     acc_final = accuracy_score(y_test, y_pred_final)
@@ -1010,7 +962,7 @@ def run_revised_pipeline(building_data: list, output_dir: str = "output"):
     else:
         clf = best_clf
 
-    # ═══ STEP 3: Train Roof Vertex Predictor ═══
+    # Step 3: train the roof vertex predictor
     print(f"\n{'='*70}")
     print("TRAINING NEURAL NETWORK ROOF VERTEX PREDICTOR")
     print(f"{'='*70}")
@@ -1019,7 +971,7 @@ def run_revised_pipeline(building_data: list, output_dir: str = "output"):
     datasets = vertex_predictor.prepare_vertex_data(valid_buildings)
     vertex_predictor.train(datasets)
 
-    # ═══ Save Results ═══
+    # Save results
     results = {
         'feature_selection': {
             'selected_features': selected_features,
@@ -1054,17 +1006,12 @@ def run_revised_pipeline(building_data: list, output_dir: str = "output"):
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Main: Run with synthetic data for testing
-# ─────────────────────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
     from cityjson_parser import CityJSONParser
     from feature_extraction import process_tile, filter_buildings
 
-    # Load your tile(s) — update the path(s) to your actual files
     filepaths = [
         "data/9-564-628.city.json",
         "data/9-564-632.city.json",

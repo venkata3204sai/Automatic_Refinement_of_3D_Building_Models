@@ -1,34 +1,23 @@
 """
-=============================================================================
-Module 2: Feature Extraction & Ground Truth Derivation
-=============================================================================
-Extracts geometric features from LOD1.3 for ML input, and derives
-ground-truth roof type labels and roof parameters from LOD2.2.
+Feature Extraction & Ground Truth Derivation
 
-Scope: Rectangular (4-vertex) footprints with flat, gabled, or hipped roofs.
+Turns LOD1.3 geometry into the feature vectors used for training, and
+derives ground-truth roof labels/parameters from the paired LOD2.2
+geometry. Scoped to rectangular (4-vertex) footprints with flat, gabled,
+or hipped roofs.
 
-Features extracted from LOD1.3 (ML input — no LiDAR/LOD2.2 data):
-  - Footprint area, perimeter, vertex count
-  - Aspect ratio, compactness, rectangularity
-  - MBR length, width, edge length ratio
-  - Building height (from LOD1.3 geometry)
-  - Orientation of longest edge
-  - LOD1.3 volume
-
-Ground truth derived from LOD2.2 (labels only — never used as input):
-  - Roof type (flat, gabled, hipped) from RoofSurface count
-  - Ridge height, ridge position, ridge length
-  - Roof slope angle
-=============================================================================
+LOD1.3 features (footprint area/perimeter/vertex count, aspect ratio,
+compactness, rectangularity, MBR dimensions, edge ratio, height,
+orientation, volume) are the only things the model sees as input. LOD2.2
+is used strictly to derive labels — roof type, ridge height/position/
+length, slope — and never leaks into the feature vector.
 """
 
 import math
-from typing import Dict, List, Tuple, Optional, Any
+from typing import List, Tuple, Optional
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 2D Geometry Helpers (for footprint analysis)
-# ─────────────────────────────────────────────────────────────────────────────
+# --- 2D geometry helpers (footprint analysis) ---
 
 def polygon_area_2d(points: List[Tuple[float, float]]) -> float:
     """Compute area of a 2D polygon using the Shoelace formula."""
@@ -153,43 +142,14 @@ def compute_rectangularity(area: float, mbr_area: float) -> float:
     return area / mbr_area
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 3D Geometry Helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-def compute_face_normal(vertices_3d: List[List[float]]) -> Optional[List[float]]:
-    """
-    Compute the unit normal vector of a 3D face using Newell's method.
-    Works for planar polygons with 3+ vertices.
-    """
-    n = len(vertices_3d)
-    if n < 3:
-        return None
-
-    nx, ny, nz = 0.0, 0.0, 0.0
-    for i in range(n):
-        j = (i + 1) % n
-        v_i = vertices_3d[i]
-        v_j = vertices_3d[j]
-        nx += (v_i[1] - v_j[1]) * (v_i[2] + v_j[2])
-        ny += (v_i[2] - v_j[2]) * (v_i[0] + v_j[0])
-        nz += (v_i[0] - v_j[0]) * (v_i[1] + v_j[1])
-
-    length = math.sqrt(nx*nx + ny*ny + nz*nz)
-    if length < 1e-10:
-        return None
-
-    return [nx/length, ny/length, nz/length]
-
+# --- 3D geometry helpers ---
 
 def distance_3d(p1: List[float], p2: List[float]) -> float:
     """Euclidean distance between two 3D points."""
     return math.sqrt(sum((a-b)**2 for a, b in zip(p1, p2)))
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# LOD1.3 Feature Extraction
-# ─────────────────────────────────────────────────────────────────────────────
+# --- LOD1.3 feature extraction ---
 
 def extract_footprint(faces: List[List[int]], vertices: List[List[float]]) -> List[int]:
     """
@@ -310,9 +270,7 @@ def extract_lod13_features(parser, geometry: dict, attributes: dict) -> Optional
     ground_z = min(z_values)
     top_z = max(z_values)
 
-    # ─── Compute Features ───
-
-    # 1. Footprint geometry
+    # Footprint geometry
     area = polygon_area_2d(footprint_2d)
     perimeter = polygon_perimeter_2d(footprint_2d)
     n_vertices = len(footprint_2d)
@@ -320,33 +278,28 @@ def extract_lod13_features(parser, geometry: dict, attributes: dict) -> Optional
     if area < 1.0:  # Skip degenerate buildings (< 1 m²)
         return None
 
-    # 2. Shape metrics
+    # Shape metrics
     mbr = minimum_bounding_rectangle(footprint_2d)
     compactness = compute_compactness(area, perimeter)
     rectangularity = compute_rectangularity(area, mbr['area'])
     aspect_ratio = mbr['aspect_ratio']
 
-    # 3. Edge analysis
+    # Edge analysis
     edges = polygon_edges_2d(footprint_2d)
     longest_edge = max(edges, key=lambda e: e[0])
     shortest_edge = min(edges, key=lambda e: e[0])
     edge_length_ratio = longest_edge[0] / shortest_edge[0] if shortest_edge[0] > 0 else 1.0
 
-    # 4. Height features (LOD1.3 geometry only)
     building_height = top_z - ground_z
 
-    # 5. Volume (LOD1.3 only — vol_lod22 excluded as it leaks LOD2.2 data)
+    # vol_lod22 is deliberately excluded here — it would leak LOD2.2 data into a feature
     vol_lod13 = attributes.get('b3_volume_lod13', None)
 
-    # 6. Orientation
     orientation = longest_edge[1]  # degrees, 0-180
-
-    # 7. Centroid
     centroid = polygon_centroid_2d(footprint_2d)
 
-    # ─── Assemble Feature Dict ───
-    # Only LOD1.3-derivable features are included as ML inputs.
-    # LOD2.2 data is used only as ground-truth labels, never as input.
+    # Everything below is LOD1.3-derivable and safe to use as an ML input;
+    # LOD2.2 only ever supplies ground-truth labels, never features.
     features = {
         # Footprint geometry
         'footprint_area': area,
@@ -384,9 +337,7 @@ def extract_lod13_features(parser, geometry: dict, attributes: dict) -> Optional
     return features
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# LOD2.2 Ground Truth Derivation
-# ─────────────────────────────────────────────────────────────────────────────
+# --- LOD2.2 ground-truth derivation ---
 
 def derive_roof_type(parser, geometry: dict) -> Optional[str]:
     """
@@ -544,9 +495,7 @@ def extract_roof_parameters(parser, geometry: dict, roof_type: str) -> Optional[
     return params
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Complete Feature + Label Extraction Pipeline
-# ─────────────────────────────────────────────────────────────────────────────
+# --- putting it together: features + labels for one building / one tile ---
 
 def extract_building_data(parser, paired_building: dict) -> Optional[dict]:
     """
@@ -629,9 +578,7 @@ def process_tile(parser) -> List[dict]:
     return results
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Dataset Filtering
-# ─────────────────────────────────────────────────────────────────────────────
+# --- dataset filtering ---
 
 def filter_buildings(building_data: List[dict],
                      max_vertices: int = 4,
@@ -686,9 +633,117 @@ def filter_buildings(building_data: List[dict],
     return filtered
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Export to ML-ready format
-# ─────────────────────────────────────────────────────────────────────────────
+# --- neighboring-building features ---
+
+def compute_neighbor_features(building_data: List[dict],
+                               radius: float = 50.0,
+                               use_ground_truth: bool = True) -> List[dict]:
+    """
+    Enrich each building's feature dict with spatial neighbor context.
+
+    For each building, finds all other buildings within `radius` meters
+    (by centroid distance) and computes:
+      - n_neighbors: count of nearby buildings
+      - neighbor_mean_height: average building_height of neighbors
+      - neighbor_mean_area: average footprint_area of neighbors
+      - neighbor_frac_flat: fraction of neighbors with flat roof
+      - neighbor_frac_gabled: fraction of neighbors with gabled roof
+      - neighbor_frac_hipped: fraction of neighbors with hipped roof
+
+    Args:
+        building_data: list of building data dicts (must have 'features'
+                       with 'centroid_x', 'centroid_y', and 'roof_type')
+        radius: neighbor search radius in meters (default: 50m)
+        use_ground_truth: if True, use ground-truth roof_type for
+                          neighbor fractions (training). If False,
+                          use 'predicted_roof_type' key (inference).
+
+    Returns:
+        Same list with neighbor features added to each building's
+        feature dict. Buildings with no neighbors get neutral values.
+    """
+    n = len(building_data)
+    if n == 0:
+        return building_data
+
+    # Extract centroids and roof types
+    centroids = []
+    roof_types = []
+    for bd in building_data:
+        f = bd['features']
+        cx = f.get('centroid_x', 0)
+        cy = f.get('centroid_y', 0)
+        centroids.append((cx, cy))
+
+        if use_ground_truth:
+            roof_types.append(bd.get('roof_type', 'unknown'))
+        else:
+            roof_types.append(bd.get('predicted_roof_type', 'unknown'))
+
+    # Compute pairwise distances and find neighbors
+    # For efficiency, only compute when needed (O(n²) is fine for <20k buildings)
+    print(f"\n  Computing neighbor features (radius={radius}m, n={n} buildings)...")
+
+    neighbor_counts = 0
+    for i in range(n):
+        cx_i, cy_i = centroids[i]
+        neighbors_idx = []
+
+        for j in range(n):
+            if i == j:
+                continue
+            cx_j, cy_j = centroids[j]
+            dist = math.sqrt((cx_i - cx_j)**2 + (cy_i - cy_j)**2)
+            if dist <= radius and dist > 0.1:
+                neighbors_idx.append((j, dist))
+
+        n_neighbors = len(neighbors_idx)
+        neighbor_counts += n_neighbors
+
+        if n_neighbors > 0:
+            # Distance-weighted: closer neighbors count more
+            weights = [1.0 / d for _, d in neighbors_idx]
+            total_weight = sum(weights)
+
+            # Weighted geometric neighbor features
+            neighbor_heights = [building_data[j]['features'].get('building_height', 0)
+                                for j, _ in neighbors_idx]
+            neighbor_areas = [building_data[j]['features'].get('footprint_area', 0)
+                              for j, _ in neighbors_idx]
+
+            w_mean_height = sum(h * w for h, w in zip(neighbor_heights, weights)) / total_weight
+            w_mean_area = sum(a * w for a, w in zip(neighbor_areas, weights)) / total_weight
+
+            # Weighted roof type fractions
+            neighbor_rt = [roof_types[j] for j, _ in neighbors_idx]
+            frac_flat = sum(w for rt, w in zip(neighbor_rt, weights) if rt == 'flat') / total_weight
+            frac_gabled = sum(w for rt, w in zip(neighbor_rt, weights) if rt == 'gabled') / total_weight
+            frac_hipped = sum(w for rt, w in zip(neighbor_rt, weights) if rt == 'hipped') / total_weight
+
+            building_data[i]['features']['n_neighbors'] = n_neighbors
+            building_data[i]['features']['neighbor_mean_height'] = w_mean_height
+            building_data[i]['features']['neighbor_mean_area'] = w_mean_area
+            building_data[i]['features']['neighbor_frac_flat'] = frac_flat
+            building_data[i]['features']['neighbor_frac_gabled'] = frac_gabled
+            building_data[i]['features']['neighbor_frac_hipped'] = frac_hipped
+        else:
+            # No neighbors found — use neutral values
+            building_data[i]['features']['n_neighbors'] = 0
+            building_data[i]['features']['neighbor_mean_height'] = building_data[i]['features'].get('building_height', 0)
+            building_data[i]['features']['neighbor_mean_area'] = building_data[i]['features'].get('footprint_area', 0)
+            building_data[i]['features']['neighbor_frac_flat'] = 0.33
+            building_data[i]['features']['neighbor_frac_gabled'] = 0.33
+            building_data[i]['features']['neighbor_frac_hipped'] = 0.33
+
+    avg_neighbors = neighbor_counts / n if n > 0 else 0
+    no_neighbor_count = sum(1 for bd in building_data if bd['features']['n_neighbors'] == 0)
+    print(f"    Average neighbors per building: {avg_neighbors:.1f}")
+    print(f"    Buildings with no neighbors: {no_neighbor_count}")
+
+    return building_data
+
+
+# --- export to ML-ready format ---
 
 def to_feature_matrix(building_data: List[dict]) -> Tuple[List[List[float]], List[str], List[str]]:
     """
@@ -738,9 +793,7 @@ def to_feature_matrix(building_data: List[dict]) -> Tuple[List[List[float]], Lis
     return X, y, feature_keys
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CSV Export (works without pandas)
-# ─────────────────────────────────────────────────────────────────────────────
+# --- CSV export (no pandas dependency) ---
 
 def export_to_csv(building_data: List[dict], filepath: str):
     """Export building features and labels to CSV file."""

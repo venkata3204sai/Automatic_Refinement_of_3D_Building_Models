@@ -1,24 +1,20 @@
 """
-=============================================================================
-Module 3: Graph Representation of Buildings
-=============================================================================
-Represents buildings as planar graphs where:
-  - Nodes = vertices (footprint corners, eave points, ridge points)
-  - Edges = structural connections (footprint edges, roof edges)
-  - Node attributes: x, y, z, type (ground/eave/ridge)
-  - Edge attributes: length, orientation, type (footprint/wall/roof/ridge)
+Graph Representation of Buildings
 
-The LOD1.3 → LOD2.2 upgrade is formulated as GRAPH AUGMENTATION:
-  Given the LOD1.3 footprint graph, predict and add roof nodes and edges.
+Represents a building as a planar graph: nodes are vertices (footprint
+corners, eave points, ridge points) with x/y/z and a type; edges are the
+structural connections between them (footprint, wall, roof, ridge), each
+carrying length and orientation.
 
-NOTE: This module uses a simple dict-based graph for portability.
-      When running with NetworkX installed, you can easily convert using
-      the provided conversion functions.
-=============================================================================
+This gives an alternative framing of the LOD1.3 -> LOD2.2 upgrade as graph
+augmentation — start from the LOD1.3 footprint graph and add the roof nodes
+and edges. It's a simple dict-based graph rather than a NetworkX graph, so
+it has no extra dependencies; to_networkx()/from_networkx() below convert
+to/from NetworkX if you have it installed and want its algorithms.
 """
 
 import math
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple
 
 
 class BuildingGraph:
@@ -101,9 +97,11 @@ class BuildingGraph:
                 if attrs['edge_type'] == edge_type]
 
     def node_count(self) -> int:
+        """Return the number of nodes in the graph."""
         return len(self.nodes)
 
     def edge_count(self) -> int:
+        """Return the number of edges in the graph."""
         return len(self.edges)
 
     def summary(self) -> str:
@@ -129,9 +127,7 @@ class BuildingGraph:
         return self.summary()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Build graphs from LOD1.3 and LOD2.2
-# ─────────────────────────────────────────────────────────────────────────────
+# --- build graphs from LOD1.3 and LOD2.2 geometry ---
 
 def build_lod13_graph(parser, geometry: dict, building_id: str = "") -> BuildingGraph:
     """
@@ -316,9 +312,7 @@ def build_lod22_graph(parser, geometry: dict, building_id: str = "") -> Building
     return graph
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Graph Comparison (LOD1.3 vs LOD2.2)
-# ─────────────────────────────────────────────────────────────────────────────
+# --- comparing LOD1.3 vs LOD2.2 graphs ---
 
 def compare_graphs(lod13_graph: BuildingGraph, lod22_graph: BuildingGraph) -> dict:
     """
@@ -370,9 +364,7 @@ def compare_graphs(lod13_graph: BuildingGraph, lod22_graph: BuildingGraph) -> di
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# NetworkX Conversion (for when NetworkX is available)
-# ─────────────────────────────────────────────────────────────────────────────
+# --- NetworkX conversion (optional dependency) ---
 
 def to_networkx(graph: BuildingGraph):
     """
