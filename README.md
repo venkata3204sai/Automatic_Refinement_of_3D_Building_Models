@@ -373,24 +373,10 @@ python experiments/tile_scaling_experiment.py
 If you use this code or build on this work, please cite the thesis:
 
 ```
-C. V. S. Sarika and M. M. Sarika, "Automatic Refinement of 3D Building Models
-from LOD1.3 to LOD2.2: Parametric Roof Reconstruction with Machine Learning,
-without Point Clouds," B.Sc. thesis, Blekinge Institute of Technology, 2026.
-```
-
-BibTeX:
-
-```bibtex
-@mastersthesis{sarika2026lod22,
-  author = {Sarika, Chandra Venkata Sai and Sarika, Murli Mohan},
-  title  = {Automatic Refinement of {3D} Building Models from {LOD}1.3 to
-            {LOD}2.2: Parametric Roof Reconstruction with Machine Learning,
-            without Point Clouds},
-  school = {Blekinge Institute of Technology},
-  year   = {2026},
-  type   = {{B.Sc.} thesis},
-  url    = {http://www.diva-portal.org/smash/record.jsf?pid=diva2:2084398}
-}
+Chandra Venkata Sai Sarika and Murli Mohan Sarika. Automatic Refinement of
+3D Building Models from LOD1.3 to LOD2.2: Parametric Roof Reconstruction
+with Machine Learning, without Point Clouds. Bachelor's thesis, Blekinge
+Institute of Technology, 2026.
 ```
 
 Full text: [DiVA portal](http://www.diva-portal.org/smash/record.jsf?pid=diva2:2084398)
