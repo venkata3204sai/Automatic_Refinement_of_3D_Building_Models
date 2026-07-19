@@ -199,6 +199,38 @@ footprints, unsupported roof types, out-of-range size):
   <img src="docs/figures/example-output.png" width="48%" alt="Reconstructed LOD2.2 for tile 9-564-628">
 </p>
 
+**Per-building close-ups**, each a different example building, spanning
+the best case to a known limitation:
+
+<p align="center">
+  <img src="docs/figures/example-flat-roof.png" width="90%" alt="Flat roof: ground-truth vs reconstruction, near-exact match">
+</p>
+
+*Flat roof* — the LOD1.3 block already encodes the flat-roof form, so both
+classification and construction are reliable. This class has the lowest
+held-out ridge-height MAE (0.251 m) and volume error (2.59%).
+
+<p align="center">
+  <img src="docs/figures/example-near-flat-gabled.png" width="90%" alt="Near-flat block with a small rooftop structure, reconstructed as gabled">
+</p>
+
+*Near-flat block with a small rooftop structure* — reconstructed as
+gabled. The raised feature isn't separable from an ordinary block in the
+LOD1.3 input, so the classifier assigns a gabled type and constructs a
+ridge; the rooftop structure itself is absent from LOD1.3 geometry and
+can't be recovered — a concrete instance of the gabled/hipped information
+limit (see [Limitations](#limitations--scope)).
+
+<p align="center">
+  <img src="docs/figures/example-multipitch-hipped.png" width="90%" alt="Sculptural multi-pitched roof, reconstructed as a single hip">
+</p>
+
+*Sculptural, multi-pitched roof* — reconstructed as a single regular hip.
+The reconstruction captures the broad sloped character of the roof but not
+its finer multi-pitch articulation, which lies outside the three
+supported classes; given only the LOD1.3 block, the classifier predicts
+the closest supported type.
+
 ## Limitations & scope
 
 - **Gabled/hipped ambiguity is fundamental, not fixable by tuning.** LOD1.3
