@@ -47,6 +47,10 @@ distinguishing gabled from hipped roofs turns out to be an information
 limit of LOD1.3 itself, not something a better model fixes (see
 [Limitations](#limitations--scope)).
 
+<p align="center">
+  <img src="docs/figures/roof-types-top-view.png" width="70%" alt="The three supported roof types: flat, gabled, hipped">
+</p>
+
 ## Method
 
 A hybrid pipeline: machine learning predicts *what varies* per building
@@ -108,6 +112,12 @@ regardless of prediction noise.
    enforcement) guarantee every accepted building yields valid,
    consistently-wound CityJSON — regardless of prediction noise.
 
+The ridge-height and ridge-inset parameters that step 5 predicts:
+
+<p align="center">
+  <img src="docs/figures/ridge-height-inset.png" width="40%" alt="Ridge-height and ridge-inset parameters">
+</p>
+
 The full architecture is diagrammed in
 [docs/figures/pipeline-flowchart.pdf](docs/figures/pipeline-flowchart.pdf).
 
@@ -146,6 +156,11 @@ Two-pass neighbor-context refinement changes 5.2% of held-out predictions
 effect on this particular held-out split, since neighbor priors learned on
 training tiles don't always transfer to geographically distinct ones.
 
+<p align="center">
+  <img src="docs/figures/class-performance-by-roof-type.png" width="48%" alt="Per-class classification accuracy chart">
+  <img src="docs/figures/confusion-matrix-heldout.png" width="48%" alt="Held-out confusion matrix">
+</p>
+
 **Geometric reconstruction** (once roof type is known, construction quality
 is far more stable across classes than classification accuracy):
 
@@ -161,6 +176,13 @@ that *do* get classified as hipped are reconstructed with 87% (LOO-CV)
 staying within 1 m ridge-height error, showing the construction stage
 degrades gracefully rather than compounding classification error.
 
+<p align="center">
+  <img src="docs/figures/ridge-height-tolerance.png" width="90%" alt="Ridge-height error tolerance bands, LOO-CV vs held-out">
+</p>
+<p align="center">
+  <img src="docs/figures/volume-tolerance.png" width="90%" alt="Relative volume error tolerance bands, LOO-CV vs held-out">
+</p>
+
 **Computational cost:** the full 41-fold LOO-CV run (retrain + reconstruct
 + evaluate all 15,944 buildings, 41 times) took ~3.7 hours on a single
 6-core/12-thread laptop CPU (AMD Ryzen 5 5500U, no GPU). In deployment,
@@ -168,10 +190,13 @@ training once on the full ~16k-building corpus takes about 5 minutes;
 per-building classification and construction afterward are near-instant,
 since construction is closed-form with no iterative optimization.
 
+**Qualitative example** — tile 9-564-628, ground truth vs. reconstructed
+(empty regions are buildings the scope filters excluded — non-rectangular
+footprints, unsupported roof types, out-of-range size):
+
 <p align="center">
-  <img src="docs/figures/roof-types.png" width="30%" alt="The three supported roof types">
-  <img src="docs/figures/confusion-matrix-heldout.png" width="30%" alt="Held-out confusion matrix">
-  <img src="docs/figures/example-output.png" width="30%" alt="Example reconstructed tile">
+  <img src="docs/figures/example-groundtruth.png" width="48%" alt="Ground-truth LOD2.2 for tile 9-564-628">
+  <img src="docs/figures/example-output.png" width="48%" alt="Reconstructed LOD2.2 for tile 9-564-628">
 </p>
 
 ## Limitations & scope
@@ -247,6 +272,10 @@ were used for the results reported in the thesis: 28 for training and 13
 held out as a geographically distinct test set (also used together for
 leave-one-tile-out cross-validation, see
 [experiments/cross_validation.py](experiments/cross_validation.py)).
+
+<p align="center">
+  <img src="docs/figures/tile-selection.png" width="55%" alt="Geographic distribution of the selected 3DBAG tiles">
+</p>
 
 **Training tiles (28):**
 ```
@@ -341,12 +370,27 @@ python experiments/tile_scaling_experiment.py
 
 ## Citation
 
-If you use this code, please cite:
+If you use this code or build on this work, please cite the thesis:
 
 ```
 C. V. S. Sarika and M. M. Sarika, "Automatic Refinement of 3D Building Models
 from LOD1.3 to LOD2.2: Parametric Roof Reconstruction with Machine Learning,
 without Point Clouds," B.Sc. thesis, Blekinge Institute of Technology, 2026.
+```
+
+BibTeX:
+
+```bibtex
+@mastersthesis{sarika2026lod22,
+  author = {Sarika, Chandra Venkata Sai and Sarika, Murli Mohan},
+  title  = {Automatic Refinement of {3D} Building Models from {LOD}1.3 to
+            {LOD}2.2: Parametric Roof Reconstruction with Machine Learning,
+            without Point Clouds},
+  school = {Blekinge Institute of Technology},
+  year   = {2026},
+  type   = {{B.Sc.} thesis},
+  url    = {http://www.diva-portal.org/smash/record.jsf?pid=diva2:2084398}
+}
 ```
 
 Full text: [DiVA portal](http://www.diva-portal.org/smash/record.jsf?pid=diva2:2084398)
