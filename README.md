@@ -273,7 +273,6 @@ experiments/                 Standalone experiments reported in the thesis
 
 scripts/                    One-off / diagnostic scripts (not part of the core pipeline)
 docs/figures/                Figures referenced by this README (from the thesis)
-Exploring-3DBAG-CityJSON-file/  Notebook used for initial exploration of the CityJSON format
 ```
 
 `data/` and `output/` are not versioned (see [Data](#data) below).
