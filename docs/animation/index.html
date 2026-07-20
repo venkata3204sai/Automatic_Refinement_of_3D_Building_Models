@@ -1,0 +1,1345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LOD1.3 → LOD2.2 — Pipeline Animation</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>">
+<style>
+  :root{
+    --bg0:#0b1020; --bg1:#101830;
+    --ink:#e8ecf5; --ink2:#aab4c8; --ink3:#6b7690;
+    --card:rgba(13,20,38,.82); --card-edge:rgba(120,150,210,.18);
+    --amber:#ffb347;
+    --flat:#3987e5; --gabled:#d95926; --hipped:#199e70;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  html,body{height:100%; overflow:hidden}
+  body{
+    font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:radial-gradient(120% 90% at 50% 0%, var(--bg1) 0%, var(--bg0) 70%);
+    color:var(--ink);
+  }
+  #gl{position:fixed; inset:0; width:100%; height:100%; display:block; touch-action:none; cursor:grab}
+  #gl.dragging{cursor:grabbing}
+  #labels{position:fixed; inset:0; pointer-events:none; overflow:hidden}
+  .lbl{
+    position:absolute; transform:translate(-50%,-50%);
+    font-size:12.5px; font-weight:600; letter-spacing:.02em;
+    color:var(--ink); background:var(--card);
+    border:1px solid var(--card-edge); border-radius:6px;
+    padding:3px 8px; white-space:nowrap;
+    opacity:0; transition:opacity .5s;
+    box-shadow:0 2px 10px rgba(0,0,0,.35);
+  }
+  .lbl.on{opacity:1}
+  .lbl.amber{color:var(--amber); border-color:rgba(255,179,71,.4)}
+  .lbl.dim{color:var(--ink2); font-weight:500}
+  .lbl.ghosted{opacity:.35}
+
+  /* ---------- top bar ---------- */
+  #topbar{
+    position:fixed; top:0; left:0; right:0; z-index:10;
+    display:flex; align-items:center; gap:14px;
+    padding:10px 16px;
+    background:linear-gradient(rgba(9,13,26,.92), rgba(9,13,26,.55) 75%, transparent);
+  }
+  #brand{font-size:13px; font-weight:700; letter-spacing:.02em; white-space:nowrap}
+  #brand small{display:block; font-weight:500; color:var(--ink3); font-size:10.5px; letter-spacing:.06em}
+  #stages{display:flex; gap:4px; flex:1; justify-content:center; flex-wrap:wrap}
+  .chip{
+    font-size:11px; font-weight:600; color:var(--ink3);
+    background:transparent; border:1px solid transparent; border-radius:999px;
+    padding:4px 10px; cursor:pointer; position:relative; transition:color .25s, background .25s;
+  }
+  .chip:hover{color:var(--ink2)}
+  .chip.done{color:var(--ink2)}
+  .chip.active{color:var(--ink); background:rgba(64,96,160,.25); border-color:var(--card-edge)}
+  .chip .bar{
+    position:absolute; left:10px; right:10px; bottom:1px; height:2px;
+    background:rgba(120,150,210,.25); border-radius:2px; overflow:hidden; display:none;
+  }
+  .chip.active .bar{display:block}
+  .chip .bar i{display:block; height:100%; width:0%; background:var(--amber)}
+  #controls{display:flex; gap:6px}
+  .btn{
+    width:34px; height:34px; border-radius:8px; border:1px solid var(--card-edge);
+    background:var(--card); color:var(--ink); cursor:pointer; font-size:14px;
+    display:flex; align-items:center; justify-content:center; transition:background .2s;
+  }
+  .btn:hover{background:rgba(40,58,100,.9)}
+
+  /* ---------- caption ---------- */
+  #caption{
+    position:fixed; left:16px; bottom:16px; z-index:10; max-width:500px;
+    background:var(--card); border:1px solid var(--card-edge); border-radius:12px;
+    padding:14px 18px; backdrop-filter:blur(6px);
+    box-shadow:0 8px 30px rgba(0,0,0,.4);
+    transition:opacity .4s, transform .4s;
+  }
+  #caption.swap{opacity:0; transform:translateY(8px)}
+  #cap-step{font-size:10.5px; font-weight:700; letter-spacing:.14em; color:var(--amber); text-transform:uppercase; margin-bottom:4px}
+  #cap-title{font-size:17px; font-weight:700; margin-bottom:6px}
+  #cap-text{font-size:13px; line-height:1.55; color:var(--ink2)}
+  #cap-text b{color:var(--ink); font-weight:600}
+
+  /* ---------- side panel ---------- */
+  #panel{
+    position:fixed; right:16px; top:64px; z-index:9; width:300px;
+    max-height:calc(100vh - 240px);
+    display:flex; pointer-events:none;
+  }
+  #panel-card{
+    background:var(--card); border:1px solid var(--card-edge); border-radius:12px;
+    padding:16px; backdrop-filter:blur(6px); pointer-events:auto; width:100%;
+    box-shadow:0 8px 30px rgba(0,0,0,.4);
+    max-height:100%; overflow-y:auto;
+    transition:opacity .4s, transform .4s;
+    scrollbar-width:thin; scrollbar-color:var(--ink3) transparent;
+  }
+  #panel-card.swap{opacity:0; transform:translateX(10px)}
+  #panel-card.hidden{opacity:0; pointer-events:none}
+  .p-title{font-size:11px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--ink3); margin-bottom:10px}
+  .p-note{font-size:11.5px; color:var(--ink3); line-height:1.5; margin-top:10px}
+  .p-note b{color:var(--ink2)}
+
+  table.feat{width:100%; border-collapse:collapse; font-size:12px}
+  table.feat td{padding:3.5px 0; border-bottom:1px solid rgba(120,150,210,.09)}
+  table.feat td:last-child{text-align:right; font-variant-numeric:tabular-nums; color:var(--ink); font-weight:600}
+  table.feat td:first-child{color:var(--ink2)}
+  table.feat tr.sel td:first-child::after{content:" ★"; color:var(--amber); font-size:10px}
+  table.feat tr{opacity:0; transform:translateX(6px); transition:opacity .4s, transform .4s}
+  table.feat tr.in{opacity:1; transform:none}
+
+  .hbar{margin:7px 0}
+  .hbar .hb-top{display:flex; justify-content:space-between; font-size:11.5px; margin-bottom:3px}
+  .hbar .hb-name{color:var(--ink2)}
+  .hbar .hb-val{font-variant-numeric:tabular-nums; font-weight:600; color:var(--ink)}
+  .hbar .hb-track{height:7px; border-radius:4px; background:rgba(120,150,210,.13); overflow:hidden}
+  .hbar .hb-fill{height:100%; width:0%; border-radius:4px; background:var(--flat); transition:width .9s cubic-bezier(.2,.7,.2,1)}
+  .hbar.win .hb-fill{background:var(--amber)}
+  .hbar.win .hb-name{color:var(--amber); font-weight:700}
+
+  .verdict{
+    margin-top:12px; padding:10px 12px; border-radius:9px; text-align:center;
+    font-size:13px; font-weight:700; letter-spacing:.05em;
+    background:rgba(217,89,38,.14); border:1px solid rgba(217,89,38,.45); color:#ff9d6b;
+    opacity:0; transform:scale(.95); transition:opacity .5s .3s, transform .5s .3s;
+  }
+  .verdict.in{opacity:1; transform:none}
+  .verdict small{display:block; font-weight:500; letter-spacing:0; color:var(--ink2); font-size:11px; margin-top:2px}
+
+  .legend{display:flex; gap:10px; margin-top:10px; flex-wrap:wrap}
+  .lg{display:flex; align-items:center; gap:5px; font-size:11.5px; color:var(--ink2)}
+  .lg i{width:10px; height:10px; border-radius:3px; display:inline-block}
+
+  .check{display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--ink2); padding:5px 0;
+    opacity:0; transform:translateX(6px); transition:opacity .4s, transform .4s}
+  .check.in{opacity:1; transform:none}
+  .check .tick{color:#58cf8e; font-weight:700}
+  .check code{font-family:ui-monospace,Consolas,monospace; font-size:11px; color:var(--ink); background:rgba(120,150,210,.12); padding:1px 5px; border-radius:4px}
+
+  .big-metric{display:flex; gap:10px; margin-top:6px}
+  .bm{flex:1; background:rgba(120,150,210,.08); border:1px solid var(--card-edge); border-radius:9px; padding:10px; text-align:center}
+  .bm .v{font-size:20px; font-weight:800; color:var(--amber); font-variant-numeric:tabular-nums}
+  .bm .k{font-size:10px; color:var(--ink3); letter-spacing:.06em; text-transform:uppercase; margin-top:3px}
+
+  .formula{
+    font-family:ui-monospace,Consolas,monospace; font-size:12px; color:var(--ink);
+    background:rgba(120,150,210,.1); border:1px solid var(--card-edge);
+    border-radius:8px; padding:10px; margin-top:10px; line-height:1.7;
+  }
+  .formula .hl{color:var(--amber); font-weight:700}
+
+  /* ---------- layers / controls card ---------- */
+  #layers{
+    position:fixed; right:16px; bottom:16px; z-index:9;
+    background:var(--card); border:1px solid var(--card-edge); border-radius:12px;
+    padding:10px 14px; backdrop-filter:blur(6px);
+    box-shadow:0 8px 30px rgba(0,0,0,.4);
+  }
+  #layers .p-title{margin-bottom:6px}
+  .lay{display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--ink2); padding:3px 0; cursor:pointer; user-select:none}
+  .lay input{accent-color:var(--amber); width:14px; height:14px; cursor:pointer}
+  .lay .sw{width:10px; height:10px; border-radius:3px}
+  #layers .hint{font-size:10.5px; color:var(--ink3); margin-top:7px; line-height:1.5}
+
+  /* ---------- end card ---------- */
+  #endcard{
+    position:fixed; inset:0; z-index:20; display:flex; align-items:center; justify-content:center;
+    background:rgba(8,12,24,.55); backdrop-filter:blur(3px);
+    opacity:0; pointer-events:none; transition:opacity 1s;
+  }
+  #endcard.on{opacity:1; pointer-events:auto}
+  #endcard .ec{
+    max-width:560px; text-align:center; padding:36px 40px;
+    background:var(--card); border:1px solid var(--card-edge); border-radius:16px;
+    box-shadow:0 20px 60px rgba(0,0,0,.5);
+  }
+  #endcard .ec-k{font-size:11px; font-weight:700; letter-spacing:.18em; color:var(--amber); text-transform:uppercase}
+  #endcard h1{font-size:22px; line-height:1.35; margin:12px 0 6px}
+  #endcard .ec-a{font-size:12.5px; color:var(--ink2); margin-bottom:18px}
+  #endcard .ec-stats{display:flex; gap:10px; justify-content:center; margin-bottom:22px; flex-wrap:wrap}
+  #endcard .bm{min-width:110px}
+  #endcard button{
+    font-size:13px; font-weight:700; color:#0b1020; background:var(--amber);
+    border:none; border-radius:9px; padding:10px 22px; cursor:pointer;
+  }
+  #endcard .ec-f{margin-top:14px; font-size:11px; color:var(--ink3)}
+
+  @media (max-width:900px){
+    #panel{display:none}
+    #caption{max-width:calc(100vw - 32px); right:16px; bottom:86px}
+    #brand small{display:none}
+    #layers .hint{display:none}
+  }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="labels"></div>
+
+<header id="topbar">
+  <div id="brand">LOD1.3 → LOD2.2<small>PARAMETRIC ROOF RECONSTRUCTION · NO POINT CLOUDS</small></div>
+  <nav id="stages"></nav>
+  <div id="controls">
+    <button class="btn" id="b-prev" title="Previous stage (←)">⏮</button>
+    <button class="btn" id="b-play" title="Play / pause (space)">⏸</button>
+    <button class="btn" id="b-next" title="Next stage (→)">⏭</button>
+  </div>
+</header>
+
+<div id="caption">
+  <div id="cap-step"></div>
+  <div id="cap-title"></div>
+  <div id="cap-text"></div>
+</div>
+
+<aside id="panel"><div id="panel-card"></div></aside>
+
+<div id="layers">
+  <div class="p-title">Building layers</div>
+  <label class="lay"><input type="checkbox" id="ly-fp" checked><span class="sw" style="background:var(--amber)"></span>Footprint</label>
+  <label class="lay"><input type="checkbox" id="ly-walls" checked><span class="sw" style="background:#8a97b2"></span>Walls</label>
+  <label class="lay"><input type="checkbox" id="ly-roof" checked><span class="sw" style="background:var(--gabled)"></span>Roof</label>
+  <div class="hint">drag · orbit&nbsp;&nbsp;right-drag / shift · pan<br>scroll · zoom&nbsp;&nbsp;space · pause</div>
+</div>
+
+<div id="endcard"><div class="ec">
+  <div class="ec-k">Bachelor's Thesis · BTH 2026</div>
+  <h1>Automatic Refinement of 3D Building Models from LOD1.3 to LOD2.2</h1>
+  <div class="ec-a">Parametric roof reconstruction with machine learning, without point clouds<br>Chandra Venkata Sai Sarika · Murli Mohan Sarika</div>
+  <div class="ec-stats">
+    <div class="bm"><div class="v">15,944</div><div class="k">buildings · 41 tiles</div></div>
+    <div class="bm"><div class="v">0.31 m</div><div class="k">ridge MAE (held-out)</div></div>
+    <div class="bm"><div class="v">92.8%</div><div class="k">within 1 m</div></div>
+  </div>
+  <button id="b-replay">↻ Replay</button>
+  <div class="ec-f">Data: 3DBAG (tudelft3d &amp; 3DGI, CC BY 4.0) · every number shown is a real pipeline result</div>
+</div></div>
+
+<script src="data.js"></script>
+<script>
+"use strict";
+/* =========================================================================
+   LOD1.3 → LOD2.2 pipeline animation.
+   All geometry and numbers come from data.js, extracted from the actual
+   thesis pipeline output (tile 9-572-624, hero NL.IMBAG.Pand.0307100000587119).
+   World coords: x east, y north, z up (meters, origin = hero centroid).
+   ========================================================================= */
+
+/* ---------------- small math ---------------- */
+const V = {
+  sub:(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],
+  add:(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]],
+  scale:(a,s)=>[a[0]*s,a[1]*s,a[2]*s],
+  cross:(a,b)=>[a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]],
+  norm:(a)=>{const l=Math.hypot(a[0],a[1],a[2])||1; return [a[0]/l,a[1]/l,a[2]/l];},
+};
+function mat4Perspective(fov, asp, near, far){
+  const f = 1/Math.tan(fov/2), nf = 1/(near-far);
+  return [f/asp,0,0,0, 0,f,0,0, 0,0,(far+near)*nf,-1, 0,0,2*far*near*nf,0];
+}
+function mat4LookAt(eye, at, up){
+  const z = V.norm(V.sub(eye,at));
+  const x = V.norm(V.cross(up,z));
+  const y = V.cross(z,x);
+  return [x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0,
+          -(x[0]*eye[0]+x[1]*eye[1]+x[2]*eye[2]),
+          -(y[0]*eye[0]+y[1]*eye[1]+y[2]*eye[2]),
+          -(z[0]*eye[0]+z[1]*eye[1]+z[2]*eye[2]), 1];
+}
+function mat4Mul(a,b){
+  const o = new Array(16);
+  for(let c=0;c<4;c++) for(let r=0;r<4;r++){
+    o[c*4+r] = a[r]*b[c*4] + a[4+r]*b[c*4+1] + a[8+r]*b[c*4+2] + a[12+r]*b[c*4+3];
+  }
+  return o;
+}
+const lerp=(a,b,t)=>a+(b-a)*t;
+const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
+const smooth=(t)=>t*t*(3-2*t);
+const easeIO=(t)=>t<.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+const easeOut=(t)=>1-Math.pow(1-t,3);
+
+/* 2D ear clipping (indices into pts) */
+function earclip(pts){
+  const n = pts.length;
+  if(n<3) return [];
+  const area = pts.reduce((s,p,i)=>{const q=pts[(i+1)%n]; return s+p[0]*q[1]-q[0]*p[1];},0);
+  let idx = [...Array(n).keys()];
+  if(area<0) idx.reverse();
+  const tris=[]; let guard=0;
+  while(idx.length>3 && guard++<3000){
+    let cut=false;
+    const m=idx.length;
+    for(let k=0;k<m;k++){
+      const i0=idx[(k-1+m)%m], i1=idx[k], i2=idx[(k+1)%m];
+      const [ax,ay]=pts[i0],[bx,by]=pts[i1],[cx,cy]=pts[i2];
+      if((bx-ax)*(cy-ay)-(by-ay)*(cx-ax) <= 1e-12) continue;
+      let inside=false;
+      for(const j of idx){
+        if(j===i0||j===i1||j===i2) continue;
+        const [px,py]=pts[j];
+        if((bx-ax)*(py-ay)-(by-ay)*(px-ax)>=-1e-12 &&
+           (cx-bx)*(py-by)-(cy-by)*(px-bx)>=-1e-12 &&
+           (ax-cx)*(py-cy)-(ay-cy)*(px-cx)>=-1e-12){inside=true;break;}
+      }
+      if(inside) continue;
+      tris.push([i0,i1,i2]); idx.splice(k,1); cut=true; break;
+    }
+    if(!cut) break;
+  }
+  if(idx.length===3) tris.push([idx[0],idx[1],idx[2]]);
+  if(!tris.length) for(let i=1;i<n-1;i++) tris.push([0,i,i+1]);
+  return tris;
+}
+
+/* ---------------- colors ---------------- */
+const C = {
+  base:[0.545,0.585,0.675], baseTop:[0.60,0.645,0.73],
+  ghost:[0.205,0.25,0.36],  ghostTop:[0.225,0.275,0.395],
+  hero:[1.0,0.702,0.278],
+  heroWall:[0.82,0.60,0.28],
+  types:[[0.224,0.529,0.898],[0.851,0.349,0.149],[0.098,0.62,0.439]], // flat, gabled, hipped (validated)
+  bg:[0.043,0.063,0.125],
+};
+const jitter=(c,s)=>c.map(v=>clamp(v*(1+s),0,1));
+
+/* ---------------- WebGL setup ---------------- */
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl',{antialias:true, alpha:true});
+if(!gl){ document.body.innerHTML = '<p style="padding:40px">WebGL not available.</p>'; throw new Error('no webgl'); }
+
+function makeProg(vs, fs){
+  const c=(t,s)=>{const h=gl.createShader(t); gl.shaderSource(h,s); gl.compileShader(h);
+    if(!gl.getShaderParameter(h,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(h)); return h;};
+  const p=gl.createProgram();
+  gl.attachShader(p,c(gl.VERTEX_SHADER,vs)); gl.attachShader(p,c(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+/* morph program: also draws static meshes (zStart==zFinal, delay 0, uT 0) */
+const morphProg = makeProg(`
+  attribute vec2 aXY; attribute float aZs; attribute float aZf; attribute float aDelay;
+  attribute vec3 aNs; attribute vec3 aNf; attribute vec3 aCs; attribute vec3 aCf;
+  uniform mat4 uPV; uniform vec3 uEye; uniform float uT; uniform float uRise;
+  varying vec3 vC; varying float vFog;
+  void main(){
+    float t = clamp((uT - aDelay)/uRise, 0.0, 1.0);
+    t = t*t*(3.0-2.0*t);
+    vec3 p = vec3(aXY, mix(aZs, aZf, t));
+    vec3 n = normalize(mix(aNs, aNf, t) + vec3(0.0,0.0,1e-5));
+    vec3 c = mix(aCs, aCf, t);
+    vec3 L1 = normalize(vec3(0.45, 0.3, 0.84));
+    vec3 L2 = normalize(vec3(-0.6, -0.5, 0.25));
+    float li = 0.42 + 0.52*max(dot(n,L1),0.0) + 0.18*max(dot(n,L2),0.0);
+    vC = c*li;
+    float d = distance(p, uEye);
+    vFog = clamp((d-260.0)/700.0, 0.0, 0.88);
+    gl_Position = uPV*vec4(p,1.0);
+  }`,`
+  precision mediump float;
+  varying vec3 vC; varying float vFog; uniform vec3 uBg;
+  void main(){ gl_FragColor = vec4(mix(vC, uBg, vFog), 1.0); }`);
+
+/* free program: fully dynamic positions (roof fly-in, glyphs), lit, with alpha */
+const freeProg = makeProg(`
+  attribute vec3 aP; attribute vec3 aN; attribute vec4 aC;
+  uniform mat4 uPV; uniform vec3 uEye;
+  varying vec4 vC; varying float vFog;
+  void main(){
+    vec3 L1 = normalize(vec3(0.45, 0.3, 0.84));
+    vec3 L2 = normalize(vec3(-0.6, -0.5, 0.25));
+    float li = 0.42 + 0.52*max(dot(aN,L1),0.0) + 0.18*max(dot(aN,L2),0.0);
+    vC = vec4(aC.rgb*li, aC.a);
+    float d = distance(aP, uEye);
+    vFog = clamp((d-260.0)/700.0, 0.0, 0.88);
+    gl_Position = uPV*vec4(aP,1.0);
+  }`,`
+  precision mediump float;
+  varying vec4 vC; varying float vFog; uniform vec3 uBg; uniform float uMul;
+  void main(){ gl_FragColor = vec4(mix(vC.rgb*uMul, uBg, vFog), vC.a); }`);
+
+/* unlit program for lines, discs, glow geometry */
+const flatProg = makeProg(`
+  attribute vec3 aP; attribute vec4 aC;
+  uniform mat4 uPV; uniform vec3 uEye;
+  varying vec4 vC; varying float vFog;
+  void main(){
+    vC = aC;
+    float d = distance(aP, uEye);
+    vFog = clamp((d-260.0)/700.0, 0.0, 0.88);
+    gl_Position = uPV*vec4(aP,1.0);
+  }`,`
+  precision mediump float;
+  varying vec4 vC; varying float vFog; uniform vec3 uBg; uniform float uMul;
+  void main(){ gl_FragColor = vec4(mix(vC.rgb*uMul, uBg, vFog), vC.a); }`);
+
+const mAttr={}, fAttr={}, gAttr={};
+['aXY','aZs','aZf','aDelay','aNs','aNf','aCs','aCf'].forEach(n=>mAttr[n]=gl.getAttribLocation(morphProg,n));
+['aP','aC'].forEach(n=>fAttr[n]=gl.getAttribLocation(flatProg,n));
+['aP','aN','aC'].forEach(n=>gAttr[n]=gl.getAttribLocation(freeProg,n));
+const mUni={}, fUni={}, gUni={};
+['uPV','uEye','uT','uRise','uBg'].forEach(n=>mUni[n]=gl.getUniformLocation(morphProg,n));
+['uPV','uEye','uBg','uMul'].forEach(n=>fUni[n]=gl.getUniformLocation(flatProg,n));
+['uPV','uEye','uBg','uMul'].forEach(n=>gUni[n]=gl.getUniformLocation(freeProg,n));
+
+/* ------- mesh batch for the morph program ------- */
+function MeshBatch(){
+  return {xy:[], zs:[], zf:[], dl:[], ns:[], nf:[], cs:[], cf:[], n:0};
+}
+function batchTri(B, p0s,p1s,p2s, p0f,p1f,p2f, cS, cF, delay){
+  let nS = V.cross(V.sub(p1s,p0s), V.sub(p2s,p0s));
+  if(Math.hypot(nS[0],nS[1],nS[2])<1e-9) nS=[0,0,1]; else nS=V.norm(nS);
+  const nF = V.norm(V.cross(V.sub(p1f,p0f), V.sub(p2f,p0f)));
+  for(const [ps,pf] of [[p0s,p0f],[p1s,p1f],[p2s,p2f]]){
+    B.xy.push(pf[0],pf[1]); B.zs.push(ps[2]); B.zf.push(pf[2]); B.dl.push(delay);
+    B.ns.push(nS[0],nS[1],nS[2]); B.nf.push(nF[0],nF[1],nF[2]);
+    B.cs.push(cS[0],cS[1],cS[2]); B.cf.push(cF[0],cF[1],cF[2]);
+    B.n++;
+  }
+}
+function batchUpload(B){
+  const mk=(arr,sz)=>{const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(arr),gl.STATIC_DRAW); return {b,sz};};
+  B.glb = {
+    aXY:mk(B.xy,2), aZs:mk(B.zs,1), aZf:mk(B.zf,1), aDelay:mk(B.dl,1),
+    aNs:mk(B.ns,3), aNf:mk(B.nf,3),
+  };
+  B.csArr = new Float32Array(B.cs);
+  B.csBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,B.csBuf);
+  gl.bufferData(gl.ARRAY_BUFFER,B.csArr,gl.DYNAMIC_DRAW);
+  B.cfArr = new Float32Array(B.cf);
+  B.cfBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,B.cfBuf);
+  gl.bufferData(gl.ARRAY_BUFFER,B.cfArr,gl.DYNAMIC_DRAW);
+}
+function batchDraw(B, t, rise, from, count){
+  if(!B.n) return;
+  gl.useProgram(morphProg);
+  for(const k of ['aXY','aZs','aZf','aDelay','aNs','aNf']){
+    const {b,sz}=B.glb[k]; gl.bindBuffer(gl.ARRAY_BUFFER,b);
+    gl.enableVertexAttribArray(mAttr[k]); gl.vertexAttribPointer(mAttr[k],sz,gl.FLOAT,false,0,0);
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER,B.csBuf);
+  gl.enableVertexAttribArray(mAttr.aCs); gl.vertexAttribPointer(mAttr.aCs,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,B.cfBuf);
+  gl.enableVertexAttribArray(mAttr.aCf); gl.vertexAttribPointer(mAttr.aCf,3,gl.FLOAT,false,0,0);
+  gl.uniformMatrix4fv(mUni.uPV,false,PV);
+  gl.uniform3fv(mUni.uEye,eye);
+  gl.uniform3fv(mUni.uBg,C.bg);
+  gl.uniform1f(mUni.uT,t);
+  gl.uniform1f(mUni.uRise,rise||1);
+  gl.drawArrays(gl.TRIANGLES, from||0, count===undefined?B.n:count);
+}
+
+/* ------- free batch: dynamic positions, per-frame upload allowed ------- */
+function FreeBatch(){
+  return {p:[], n:[], c:[], nn:0,
+    upload(){
+      this.pArr=new Float32Array(this.p); this.nArr=new Float32Array(this.n); this.cArr=new Float32Array(this.c);
+      this.pb=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,this.pb);
+      gl.bufferData(gl.ARRAY_BUFFER,this.pArr,gl.DYNAMIC_DRAW);
+      this.nb=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,this.nb);
+      gl.bufferData(gl.ARRAY_BUFFER,this.nArr,gl.DYNAMIC_DRAW);
+      this.cb=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,this.cb);
+      gl.bufferData(gl.ARRAY_BUFFER,this.cArr,gl.DYNAMIC_DRAW);
+    },
+    rePos(){ gl.bindBuffer(gl.ARRAY_BUFFER,this.pb); gl.bufferSubData(gl.ARRAY_BUFFER,0,this.pArr); },
+    reCol(){ gl.bindBuffer(gl.ARRAY_BUFFER,this.cb); gl.bufferSubData(gl.ARRAY_BUFFER,0,this.cArr); },
+    tri(p0,p1,p2,col,alpha){
+      const nrm=V.norm(V.cross(V.sub(p1,p0),V.sub(p2,p0)));
+      for(const p of [p0,p1,p2]){
+        this.p.push(p[0],p[1],p[2]); this.n.push(nrm[0],nrm[1],nrm[2]);
+        this.c.push(col[0],col[1],col[2], alpha===undefined?1:alpha);
+        this.nn++;
+      }
+    },
+    draw(mul, blend){
+      if(!this.nn) return;
+      gl.useProgram(freeProg);
+      gl.bindBuffer(gl.ARRAY_BUFFER,this.pb);
+      gl.enableVertexAttribArray(gAttr.aP); gl.vertexAttribPointer(gAttr.aP,3,gl.FLOAT,false,0,0);
+      gl.bindBuffer(gl.ARRAY_BUFFER,this.nb);
+      gl.enableVertexAttribArray(gAttr.aN); gl.vertexAttribPointer(gAttr.aN,3,gl.FLOAT,false,0,0);
+      gl.bindBuffer(gl.ARRAY_BUFFER,this.cb);
+      gl.enableVertexAttribArray(gAttr.aC); gl.vertexAttribPointer(gAttr.aC,4,gl.FLOAT,false,0,0);
+      gl.uniformMatrix4fv(gUni.uPV,false,PV);
+      gl.uniform3fv(gUni.uEye,eye);
+      gl.uniform3fv(gUni.uBg,C.bg);
+      gl.uniform1f(gUni.uMul, mul===undefined?1:mul);
+      if(blend){ gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA); }
+      gl.drawArrays(gl.TRIANGLES,0,this.nn);
+      if(blend) gl.disable(gl.BLEND);
+    }
+  };
+}
+
+/* ---------------- build the city ---------------- */
+const H = ANIM.hero;
+const reconByCtx = {}; ANIM.recon.forEach(r=>reconByCtx[r.i]=r);
+
+const cityB = MeshBatch();
+const cityRanges = [];
+let plainCount = 0;
+
+function addPrism(B, ctx, cWall, cTop){
+  const fp = ctx.fp, g = ctx.g, t = ctx.t;
+  const start = B.n;
+  for(const [a,b,c] of earclip(fp)){
+    const P=(i)=>[fp[i][0],fp[i][1],t];
+    batchTri(B,P(a),P(b),P(c),P(a),P(b),P(c),cTop,cTop,0);
+  }
+  const n=fp.length;
+  for(let i=0;i<n;i++){
+    const [x1,y1]=fp[i],[x2,y2]=fp[(i+1)%n];
+    const p00=[x1,y1,g],p10=[x2,y2,g],p11=[x2,y2,t],p01=[x1,y1,t];
+    batchTri(B,p00,p10,p11,p00,p10,p11,cWall,cWall,0);
+    batchTri(B,p00,p11,p01,p00,p11,p01,cWall,cWall,0);
+  }
+  return {start, count:B.n-start, topCount:(fp.length-2)*3};
+}
+{
+  const plain=[], owners=[];
+  ANIM.context.forEach((ctx,i)=>{
+    if(ctx.hero) return;
+    (reconByCtx[i]!==undefined ? owners : plain).push([ctx,i]);
+  });
+  for(const [ctx,i] of plain){
+    const s = Math.sin(i*127.1)*0.05;
+    cityRanges.push({...addPrism(cityB, ctx, jitter(C.base,s), jitter(C.baseTop,s)), ctx, ctxIndex:i});
+  }
+  plainCount = cityB.n;
+  for(const [ctx,i] of owners){
+    const s = Math.sin(i*127.1)*0.05;
+    cityRanges.push({...addPrism(cityB, ctx, jitter(C.base,s), jitter(C.baseTop,s)), ctx, ctxIndex:i});
+  }
+  batchUpload(cityB);
+}
+const cityColA = new Float32Array(cityB.csArr);
+const cityColFrom = new Float32Array(cityB.csArr);
+const cityColTo = new Float32Array(cityB.csArr);
+const cityColBase = new Float32Array(cityB.csArr);
+let cityMixT = 1;
+function cityPaint(fn){ // fn(ctx, ctxIndex, isTop) -> color or null=base
+  cityColFrom.set(cityColA);
+  for(const r of cityRanges){
+    for(let v=0; v<r.count; v++){
+      const o=(r.start+v)*3;
+      const res = fn(r.ctx, r.ctxIndex, v<r.topCount);
+      const c = res || [cityColBase[o],cityColBase[o+1],cityColBase[o+2]];
+      cityColTo[o]=c[0]; cityColTo[o+1]=c[1]; cityColTo[o+2]=c[2];
+    }
+  }
+  cityMixT = 0;
+}
+/* city visibility mode: the map is shown, ghosted, hidden (building isolated),
+   or repainted for the finale. 'hidden' fades to near-background, then the
+   render loop stops drawing it entirely. */
+const CITY_FADE=[0.055,0.075,0.135];
+let cityMode='normal';
+function setCityMode(m){
+  cityMode=m;
+  if(m==='normal') cityPaint(()=>null);
+  else if(m==='ghost') cityPaint(()=>C.ghost);
+  else if(m==='hidden') cityPaint(()=>CITY_FADE);
+  else if(m==='finale') cityPaint((ctx,i)=>reconByCtx[i]!==undefined?null:[0.224,0.267,0.369]);
+}
+function cityColStep(dt){
+  if(cityMixT>=1) return;
+  cityMixT = Math.min(1, cityMixT+dt/0.8);
+  const t = smooth(cityMixT);
+  for(let i=0;i<cityColA.length;i++) cityColA[i]=lerp(cityColFrom[i],cityColTo[i],t);
+  gl.bindBuffer(gl.ARRAY_BUFFER,cityB.csBuf);
+  gl.bufferSubData(gl.ARRAY_BUFFER,0,cityColA);
+  gl.bindBuffer(gl.ARRAY_BUFFER,cityB.cfBuf);
+  gl.bufferSubData(gl.ARRAY_BUFFER,0,cityColA);
+}
+
+/* =========================================================================
+   HERO BUILDING — split into layers:
+     fpFill + fpLine (footprint), wallB (4 walls), lidB (LOD1.3 flat top),
+     roofPieces (2 slope planes + 2 gable triangles) that FLY IN and dock.
+   ========================================================================= */
+const HTOP=H.top13;
+const RIDGE=[H.ridge_pts[0], H.ridge_pts[1]];
+
+/* classify footprint edges: eave (ridge-parallel) vs gable end */
+const heroEdges=(()=>{
+  const fp=H.fp, n=fp.length;
+  const rd=V.norm([RIDGE[1][0]-RIDGE[0][0], RIDGE[1][1]-RIDGE[0][1], 0]);
+  const rn=[-rd[1], rd[0]];
+  const dist=(p)=>Math.abs((p[0]-RIDGE[0][0])*rn[0] + (p[1]-RIDGE[0][1])*rn[1]);
+  const eds = [];
+  for(let i=0;i<n;i++){
+    const a=fp[i], b=fp[(i+1)%n];
+    eds.push({a,b, mid:[(a[0]+b[0])/2,(a[1]+b[1])/2], d:dist([(a[0]+b[0])/2,(a[1]+b[1])/2])});
+  }
+  const dmax = Math.max(...eds.map(e=>e.d));
+  eds.forEach(e=>e.type = e.d > dmax*0.5 ? 'eave' : 'gable');
+  return eds;
+})();
+const nearRidge=(p)=>{
+  const d0=Math.hypot(p[0]-RIDGE[0][0], p[1]-RIDGE[0][1]);
+  const d1=Math.hypot(p[0]-RIDGE[1][0], p[1]-RIDGE[1][1]);
+  return d0<d1 ? RIDGE[0] : RIDGE[1];
+};
+
+/* hero static layers (morph batches, drawn with uT=0) */
+const wallB=MeshBatch(), lidB=MeshBatch(), fpFillB=MeshBatch();
+{
+  const fp=H.fp, n=fp.length;
+  for(let i=0;i<n;i++){
+    const [x1,y1]=fp[i], [x2,y2]=fp[(i+1)%n];
+    const p00=[x1,y1,0],p10=[x2,y2,0],p11=[x2,y2,HTOP],p01=[x1,y1,HTOP];
+    batchTri(wallB,p00,p10,p11,p00,p10,p11,C.hero,C.hero,0);
+    batchTri(wallB,p00,p11,p01,p00,p11,p01,C.hero,C.hero,0);
+  }
+  for(const [a,b,c] of earclip(fp)){
+    const P=(i)=>[fp[i][0],fp[i][1],HTOP];
+    batchTri(lidB,P(a),P(b),P(c),P(a),P(b),P(c),C.hero,C.hero,0);
+    const Q=(i)=>[fp[i][0],fp[i][1],0.06];
+    batchTri(fpFillB,Q(a),Q(b),Q(c),Q(a),Q(b),Q(c),C.hero,C.hero,0);
+  }
+  batchUpload(wallB); batchUpload(lidB); batchUpload(fpFillB);
+}
+function paintBatch(B, col){
+  for(let i=0;i<B.n;i++){ B.csArr[i*3]=col[0]; B.csArr[i*3+1]=col[1]; B.csArr[i*3+2]=col[2]; }
+  gl.bindBuffer(gl.ARRAY_BUFFER,B.csBuf); gl.bufferSubData(gl.ARRAY_BUFFER,0,B.csArr);
+  gl.bindBuffer(gl.ARRAY_BUFFER,B.cfBuf); gl.bufferSubData(gl.ARRAY_BUFFER,0,B.csArr);
+}
+function heroPaint(highlight){
+  paintBatch(wallB, highlight? C.heroWall : C.base);
+  paintBatch(lidB, highlight? C.hero : C.baseTop);
+}
+heroPaint(false);
+
+/* roof assembly — a FreeBatch whose positions get a per-piece flight offset */
+const roofB = FreeBatch();
+const roofPieces = [];   // {vStart, vCount, off:[dx,dy,dz], delay, dur}
+{
+  const gabColor=C.types[1];
+  const gableCol=[0.93,0.55,0.32];
+  const rd=V.norm([RIDGE[1][0]-RIDGE[0][0], RIDGE[1][1]-RIDGE[0][1], 0]);
+  for(const e of heroEdges){
+    const s=roofB.nn;
+    if(e.type==='eave'){
+      const rA=nearRidge(e.a), rB=nearRidge(e.b);
+      const A=[e.a[0],e.a[1],HTOP], B2=[e.b[0],e.b[1],HTOP];
+      roofB.tri(A,B2,rB,gabColor); roofB.tri(A,rB,rA,gabColor);
+      // fly from: outward (away from ridge) + high up
+      const out=V.norm([e.mid[0]-(RIDGE[0][0]+RIDGE[1][0])/2, e.mid[1]-(RIDGE[0][1]+RIDGE[1][1])/2, 0]);
+      roofPieces.push({vStart:s, vCount:roofB.nn-s, off:[out[0]*16, out[1]*16, 30], delay:0, dur:0.5});
+    }else{
+      const r=nearRidge(e.mid);
+      const A=[e.a[0],e.a[1],HTOP], B2=[e.b[0],e.b[1],HTOP];
+      roofB.tri(A,B2,r,gableCol);
+      const out=V.norm([e.mid[0]-(RIDGE[0][0]+RIDGE[1][0])/2, e.mid[1]-(RIDGE[0][1]+RIDGE[1][1])/2, 0]);
+      roofPieces.push({vStart:s, vCount:roofB.nn-s, off:[out[0]*26, out[1]*26, 14], delay:0.34, dur:0.44});
+    }
+  }
+  roofB.upload();
+  roofB.basePos = new Float32Array(roofB.pArr);
+}
+let roofT = 1;           // 0 = pieces at start of flight, 1 = docked
+let roofTApplied = -1;
+function roofApply(){
+  if(roofT===roofTApplied) return;
+  roofTApplied=roofT;
+  for(const pc of roofPieces){
+    const tt = easeOut(clamp((roofT-pc.delay)/pc.dur, 0, 1));
+    const ox=pc.off[0]*(1-tt), oy=pc.off[1]*(1-tt), oz=pc.off[2]*(1-tt);
+    for(let v=0; v<pc.vCount; v++){
+      const o=(pc.vStart+v)*3;
+      roofB.pArr[o]  = roofB.basePos[o]+ox;
+      roofB.pArr[o+1]= roofB.basePos[o+1]+oy;
+      roofB.pArr[o+2]= roofB.basePos[o+2]+oz;
+    }
+  }
+  roofB.rePos();
+}
+
+/* candidate roof-type glyphs (S3): flat / gabled / hipped hovering over hero */
+const glyphB = FreeBatch();
+const glyphInfo=[];      // {vStart,vCount,center,type}
+{
+  const gw=6.5, gh=2.6, base=HTOP+9;
+  const rd=V.norm([RIDGE[1][0]-RIDGE[0][0], RIDGE[1][1]-RIDGE[0][1], 0]);
+  const mk=(k,cx,cy)=>{
+    const s=glyphB.nn, col=C.types[k];
+    const c0=[cx-gw/2,cy-gw/2], c1=[cx+gw/2,cy-gw/2], c2=[cx+gw/2,cy+gw/2], c3=[cx-gw/2,cy+gw/2];
+    const zb=base;
+    const P=(c,z)=>[c[0],c[1],z];
+    if(k===0){ // flat slab
+      const zt=zb+0.7;
+      glyphB.tri(P(c0,zt),P(c1,zt),P(c2,zt),col); glyphB.tri(P(c0,zt),P(c2,zt),P(c3,zt),col);
+      for(const [a,b] of [[c0,c1],[c1,c2],[c2,c3],[c3,c0]]){
+        glyphB.tri(P(a,zb),P(b,zb),P(b,zt),col); glyphB.tri(P(a,zb),P(b,zt),P(a,zt),col);
+      }
+    }else if(k===1){ // gabled
+      const m0=[cx-gw/2,cy], m1=[cx+gw/2,cy], zt=zb+gh;
+      glyphB.tri(P(c0,zb),P(c1,zb),P(m1,zt),col); glyphB.tri(P(c0,zb),P(m1,zt),P(m0,zt),col);
+      glyphB.tri(P(c3,zb),P(m0,zt),P(m1,zt),col); glyphB.tri(P(c3,zb),P(m1,zt),P(c2,zb),col);
+      glyphB.tri(P(c0,zb),P(m0,zt),P(c3,zb),col);
+      glyphB.tri(P(c1,zb),P(c2,zb),P(m1,zt),col);
+    }else{ // hipped
+      const ins=gw*0.28, zt=zb+gh;
+      const h0=[cx-gw/2+ins,cy], h1=[cx+gw/2-ins,cy];
+      glyphB.tri(P(c0,zb),P(c1,zb),P(h1,zt),col); glyphB.tri(P(c0,zb),P(h1,zt),P(h0,zt),col);
+      glyphB.tri(P(c3,zb),P(h0,zt),P(h1,zt),col); glyphB.tri(P(c3,zb),P(h1,zt),P(c2,zb),col);
+      glyphB.tri(P(c0,zb),P(h0,zt),P(c3,zb),col);
+      glyphB.tri(P(c1,zb),P(c2,zb),P(h1,zt),col);
+    }
+    glyphInfo.push({vStart:s, vCount:glyphB.nn-s, type:k, center:[cx,cy,zb+1]});
+  };
+  const sp=10.5;
+  mk(0, -rd[0]*sp, -rd[1]*sp);
+  mk(1, 0, 0);
+  mk(2, rd[0]*sp, rd[1]*sp);
+  glyphB.upload();
+  glyphB.basePos=new Float32Array(glyphB.pArr);
+  glyphB.baseCol=new Float32Array(glyphB.cArr);
+}
+let glyphOn=false, glyphPick=0;  // pick ∈ [0..1] fades losers out
+function glyphFrame(now){
+  const bob=Math.sin(now/900)*0.5, spin=now/2600;
+  for(const g of glyphInfo){
+    const cz=Math.cos(spin), sz=Math.sin(spin);
+    const lose = g.type!==1 ? glyphPick : 0;
+    for(let v=0; v<g.vCount; v++){
+      const o=(g.vStart+v)*3, oc=(g.vStart+v)*4;
+      const px=glyphB.basePos[o]-g.center[0], py=glyphB.basePos[o+1]-g.center[1];
+      glyphB.pArr[o]  = g.center[0] + px*cz - py*sz;
+      glyphB.pArr[o+1]= g.center[1] + px*sz + py*cz;
+      glyphB.pArr[o+2]= glyphB.basePos[o+2] + bob + (g.type===1? glyphPick*1.2 : 0);
+      glyphB.cArr[oc+3] = glyphB.baseCol[oc+3]*(1-lose*0.92);
+    }
+  }
+  glyphB.rePos(); glyphB.reCol();
+}
+
+/* ---------------- reconstructed roofs for the finale ---------------- */
+const reconB = MeshBatch();
+let maxD = 1;
+ANIM.recon.forEach(r=>{ const c=ANIM.context[r.i]; if(!c.hero) maxD=Math.max(maxD,c.d); });
+for(const r of ANIM.recon){
+  const ctx = ANIM.context[r.i];
+  if(ctx.hero) continue;
+  const delay = (ctx.d/maxD)*0.68;
+  const tint = ctx.pt!==undefined ? C.types[ctx.pt] : C.baseTop;
+  const s = Math.sin(r.i*127.1)*0.05;
+  const wall = jitter(C.base,s);
+  for(let f=0; f<r.t.length; f++){
+    const [a,b,c] = r.t[f];
+    const fin = [r.v[a], r.v[b], r.v[c]];
+    const sta = fin.map(p=>[p[0],p[1], (p[2]-ctx.g)<0.05 ? p[2] : r.top13]);
+    const isRoof = r.r[f]===1;
+    batchTri(reconB, sta[0],sta[1],sta[2], fin[0],fin[1],fin[2],
+             isRoof? jitter(C.baseTop,s) : wall, isRoof? tint : wall, delay);
+  }
+}
+batchUpload(reconB);
+let finaleT = 0;
+
+/* ---------------- unlit line/disc geometry ---------------- */
+function FlatBatch(mode){ return {p:[], c:[], mode, n:0}; }
+function fPush(B, pt, col){ B.p.push(pt[0],pt[1],pt[2]); B.c.push(col[0],col[1],col[2],col[3]); B.n++; }
+function fUpload(B){
+  B.pb=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,B.pb);
+  B.pArr=new Float32Array(B.p);
+  gl.bufferData(gl.ARRAY_BUFFER,B.pArr,gl.DYNAMIC_DRAW);
+  B.cb=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,B.cb);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(B.c),gl.STATIC_DRAW);
+}
+function fDraw(B, mul, blend){
+  if(!B.n) return;
+  gl.useProgram(flatProg);
+  gl.bindBuffer(gl.ARRAY_BUFFER,B.pb);
+  gl.enableVertexAttribArray(fAttr.aP); gl.vertexAttribPointer(fAttr.aP,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,B.cb);
+  gl.enableVertexAttribArray(fAttr.aC); gl.vertexAttribPointer(fAttr.aC,4,gl.FLOAT,false,0,0);
+  gl.uniformMatrix4fv(fUni.uPV,false,PV);
+  gl.uniform3fv(fUni.uEye,eye);
+  gl.uniform3fv(fUni.uBg,C.bg);
+  gl.uniform1f(fUni.uMul, mul===undefined?1:mul);
+  if(blend){ gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false); }
+  gl.drawArrays(B.mode, 0, B.n);
+  if(blend){ gl.depthMask(true); gl.disable(gl.BLEND); }
+}
+
+const gridB = FlatBatch(gl.LINES);
+{
+  const gcol=[0.16,0.22,0.36,1], ext=620, step=50;
+  for(let v=-ext; v<=ext; v+=step){
+    fPush(gridB,[v,-ext,0.02],gcol); fPush(gridB,[v,ext,0.02],gcol);
+    fPush(gridB,[-ext,v,0.02],gcol); fPush(gridB,[ext,v,0.02],gcol);
+  }
+  fUpload(gridB);
+}
+const groundB = FlatBatch(gl.TRIANGLES);
+{
+  const gc=[0.075,0.104,0.185,1], e=1500;
+  fPush(groundB,[-e,-e,0],gc); fPush(groundB,[e,-e,0],gc); fPush(groundB,[e,e,0],gc);
+  fPush(groundB,[-e,-e,0],gc); fPush(groundB,[e,e,0],gc); fPush(groundB,[-e,e,0],gc);
+  fUpload(groundB);
+}
+const outlineB = FlatBatch(gl.LINES);
+{
+  const oc=[0.045,0.07,0.135,0.85];
+  ANIM.context.forEach((ctx)=>{
+    if(ctx.hero) return;
+    const n=ctx.fp.length;
+    for(let i=0;i<n;i++){
+      fPush(outlineB,[ctx.fp[i][0],ctx.fp[i][1],ctx.t+0.03],oc);
+      fPush(outlineB,[ctx.fp[(i+1)%n][0],ctx.fp[(i+1)%n][1],ctx.t+0.03],oc);
+    }
+  });
+  fUpload(outlineB);
+}
+/* hero footprint outline (footprint layer) */
+const fpLineB = FlatBatch(gl.LINES);
+{
+  const a=[1,0.7,0.28,1], n=H.fp.length;
+  for(let i=0;i<n;i++){
+    fPush(fpLineB,[H.fp[i][0],H.fp[i][1],0.12],a);
+    fPush(fpLineB,[H.fp[(i+1)%n][0],H.fp[(i+1)%n][1],0.12],a);
+  }
+  fUpload(fpLineB);
+}
+/* measuring cage for S2 */
+const cageB = FlatBatch(gl.LINES);
+{
+  const a=[1,0.7,0.28,0.95], n=H.fp.length;
+  for(const z of [0.12, HTOP+0.06]){
+    for(let i=0;i<n;i++){
+      fPush(cageB,[H.fp[i][0],H.fp[i][1],z],a);
+      fPush(cageB,[H.fp[(i+1)%n][0],H.fp[(i+1)%n][1],z],a);
+    }
+  }
+  for(let i=0;i<n;i++){
+    fPush(cageB,[H.fp[i][0],H.fp[i][1],0.12],a);
+    fPush(cageB,[H.fp[i][0],H.fp[i][1],HTOP+0.06],a);
+  }
+  const dim=[0.55,0.75,1,0.9], off=2.2;
+  const cx=H.fp.reduce((s,p)=>s+p[0],0)/n, cy=H.fp.reduce((s,p)=>s+p[1],0)/n;
+  for(let i=0;i<2;i++){
+    const p1=H.fp[i], p2=H.fp[(i+1)%n];
+    const mx=(p1[0]+p2[0])/2, my=(p1[1]+p2[1])/2;
+    const dx=mx-cx, dy=my-cy, dl=Math.hypot(dx,dy)||1;
+    const ox=dx/dl*off, oy=dy/dl*off;
+    fPush(cageB,[p1[0]+ox,p1[1]+oy,0.12],dim); fPush(cageB,[p2[0]+ox,p2[1]+oy,0.12],dim);
+    fPush(cageB,[p1[0],p1[1],0.12],dim); fPush(cageB,[p1[0]+ox,p1[1]+oy,0.12],dim);
+    fPush(cageB,[p2[0],p2[1],0.12],dim); fPush(cageB,[p2[0]+ox,p2[1]+oy,0.12],dim);
+  }
+  const hc=H.fp[2];
+  fPush(cageB,[hc[0],hc[1],0.12],dim); fPush(cageB,[hc[0],hc[1],HTOP],dim);
+  fUpload(cageB);
+}
+/* ridge beam + endpoint markers: beam grows from midpoint */
+const ridgeBeamB = FlatBatch(gl.TRIANGLES);
+const ridgeMarkB = FlatBatch(gl.TRIANGLES);
+function buildBeam(t){  // t: 0..1 growth from center
+  const mid=[(RIDGE[0][0]+RIDGE[1][0])/2,(RIDGE[0][1]+RIDGE[1][1])/2,(RIDGE[0][2]+RIDGE[1][2])/2];
+  const p=[lerp(mid[0],RIDGE[0][0],t),lerp(mid[1],RIDGE[0][1],t),lerp(mid[2],RIDGE[0][2],t)];
+  const q=[lerp(mid[0],RIDGE[1][0],t),lerp(mid[1],RIDGE[1][1],t),lerp(mid[2],RIDGE[1][2],t)];
+  const col=[1,0.72,0.3,1];
+  const dir=V.norm(V.sub(q,p));
+  const side=V.scale(V.norm(V.cross(dir,[0,0,1])),0.14);
+  const up=[0,0,0.14];
+  const corners=(pt)=>[
+    [pt[0]-side[0],pt[1]-side[1],pt[2]-up[2]],[pt[0]+side[0],pt[1]+side[1],pt[2]-up[2]],
+    [pt[0]+side[0],pt[1]+side[1],pt[2]+up[2]],[pt[0]-side[0],pt[1]-side[1],pt[2]+up[2]]];
+  const A=corners(p), B2=corners(q);
+  ridgeBeamB.p.length=0; ridgeBeamB.c.length=0; ridgeBeamB.n=0;
+  const quads=[[A[0],A[1],B2[1],B2[0]],[A[1],A[2],B2[2],B2[1]],[A[2],A[3],B2[3],B2[2]],[A[3],A[0],B2[0],B2[3]],
+               [A[3],A[2],A[1],A[0]],[B2[0],B2[1],B2[2],B2[3]]];
+  for(const[a,b,c,d] of quads){
+    fPush(ridgeBeamB,a,col);fPush(ridgeBeamB,b,col);fPush(ridgeBeamB,c,col);
+    fPush(ridgeBeamB,a,col);fPush(ridgeBeamB,c,col);fPush(ridgeBeamB,d,col);
+  }
+  if(ridgeBeamB.pb){
+    gl.bindBuffer(gl.ARRAY_BUFFER,ridgeBeamB.pb);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(ridgeBeamB.p),gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER,ridgeBeamB.cb);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(ridgeBeamB.c),gl.DYNAMIC_DRAW);
+  } else fUpload(ridgeBeamB);
+}
+buildBeam(1);
+{ /* octahedron markers at the two predicted ridge points */
+  const col=[1,0.78,0.35,1], r=0.55;
+  for(const P of RIDGE){
+    const top=[P[0],P[1],P[2]+r], bot=[P[0],P[1],P[2]-r];
+    const eq=[[P[0]+r,P[1],P[2]],[P[0],P[1]+r,P[2]],[P[0]-r,P[1],P[2]],[P[0],P[1]-r,P[2]]];
+    for(let i=0;i<4;i++){
+      const a=eq[i], b=eq[(i+1)%4];
+      fPush(ridgeMarkB,top,col);fPush(ridgeMarkB,a,col);fPush(ridgeMarkB,b,col);
+      fPush(ridgeMarkB,bot,col);fPush(ridgeMarkB,b,col);fPush(ridgeMarkB,a,col);
+    }
+  }
+  fUpload(ridgeMarkB);
+}
+/* ground-truth wireframe (S7): only crease/boundary edges */
+const gtB = FlatBatch(gl.LINES);
+{
+  const m=H.gt_mesh, ec={}, wc=[0.55,0.95,1.0,0.95];
+  const keyOf=(a,b)=>a<b?a+'_'+b:b+'_'+a;
+  m.t.forEach((tri)=>{
+    const nrm=V.norm(V.cross(V.sub(m.v[tri[1]],m.v[tri[0]]),V.sub(m.v[tri[2]],m.v[tri[0]])));
+    for(let e=0;e<3;e++){
+      const k=keyOf(tri[e],tri[(e+1)%3]);
+      (ec[k]=ec[k]||[]).push(nrm);
+    }
+  });
+  for(const k in ec){
+    const ns=ec[k];
+    let keep = ns.length===1;
+    if(ns.length>=2) keep = (ns[0][0]*ns[1][0]+ns[0][1]*ns[1][1]+ns[0][2]*ns[1][2]) < 0.985;
+    if(keep){
+      const [a,b]=k.split('_').map(Number);
+      fPush(gtB,m.v[a],wc); fPush(gtB,m.v[b],wc);
+    }
+  }
+  fUpload(gtB);
+}
+
+/* ---------------- camera (free orbit + pan + zoom) ---------------- */
+let PV=null, eye=[0,0,100];
+let cam = {target:[0,0,0], az:0.9, el:0.9, dist:640};
+let userAz=0, userEl=0, userZoom=1, userPan=[0,0,0];
+let userFade=1; // 1 = keep user offsets, decays toward 0 on stage change
+function camEval(from, to, t){
+  const e=easeIO(t);
+  return {
+    target:[lerp(from.target[0],to.target[0],e),lerp(from.target[1],to.target[1],e),lerp(from.target[2],to.target[2],e)],
+    az:lerp(from.az,to.az,e), el:lerp(from.el,to.el,e), dist:lerp(from.dist,to.dist,e),
+  };
+}
+function updateMatrices(){
+  const f=userFade;
+  const az=cam.az+userAz*f, el=clamp(cam.el+userEl*f,-0.28,1.53), d=cam.dist*lerp(1,userZoom,f);
+  const tgt=[cam.target[0]+userPan[0]*f, cam.target[1]+userPan[1]*f, cam.target[2]+userPan[2]*f];
+  eye=[tgt[0]+d*Math.cos(el)*Math.cos(az),
+       tgt[1]+d*Math.cos(el)*Math.sin(az),
+       tgt[2]+d*Math.sin(el)];
+  const proj=mat4Perspective(42*Math.PI/180, canvas.width/canvas.height, 1, 4000);
+  const view=mat4LookAt(eye,tgt,[0,0,1]);
+  PV=mat4Mul(proj,view);
+}
+function project(wp){
+  const x=wp[0],y=wp[1],z=wp[2];
+  const cx=PV[0]*x+PV[4]*y+PV[8]*z+PV[12];
+  const cy=PV[1]*x+PV[5]*y+PV[9]*z+PV[13];
+  const cw=PV[3]*x+PV[7]*y+PV[11]*z+PV[15];
+  if(cw<=0) return null;
+  return [(cx/cw*0.5+0.5)*innerWidth, (1-(cy/cw*0.5+0.5))*innerHeight];
+}
+let drag=null, dragBtn=0;
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+canvas.addEventListener('pointerdown',e=>{
+  drag=[e.clientX,e.clientY]; dragBtn=(e.button===2||e.shiftKey)?2:0;
+  userFade=1;
+  canvas.classList.add('dragging'); canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove',e=>{
+  if(!drag) return;
+  const dx=e.clientX-drag[0], dy=e.clientY-drag[1];
+  if(dragBtn===2){
+    const az=cam.az+userAz, d=cam.dist*userZoom;
+    const k=d*0.0012;
+    const rx=[-Math.sin(az),Math.cos(az)], fw=[-Math.cos(az),-Math.sin(az)];
+    userPan[0]+= (-dx*rx[0] + -dy*fw[0]*1.6)*k;
+    userPan[1]+= (-dx*rx[1] + -dy*fw[1]*1.6)*k;
+  }else{
+    userAz -= dx*0.005;
+    userEl += dy*0.004;
+  }
+  drag=[e.clientX,e.clientY];
+});
+canvas.addEventListener('pointerup',()=>{drag=null; canvas.classList.remove('dragging');});
+canvas.addEventListener('wheel',e=>{e.preventDefault(); userFade=1; userZoom=clamp(userZoom*Math.pow(1.0012,e.deltaY),0.22,3.2);},{passive:false});
+
+/* ---------------- projected labels ---------------- */
+const labelHost=document.getElementById('labels');
+const liveLabels=[];
+function label(id, world, html, cls){
+  let el=document.getElementById('lb-'+id);
+  if(!el){
+    el=document.createElement('div'); el.id='lb-'+id; el.className='lbl '+(cls||'');
+    el.innerHTML=html; labelHost.appendChild(el);
+    liveLabels.push({el, world});
+  }
+  requestAnimationFrame(()=>el.classList.add('on'));
+  return el;
+}
+function clearLabels(){
+  liveLabels.forEach(l=>{l.el.classList.remove('on'); setTimeout(()=>l.el.remove(),500);});
+  liveLabels.length=0;
+}
+function updateLabels(){
+  for(const l of liveLabels){
+    const s=project(l.world);
+    if(!s){l.el.style.display='none'; continue;}
+    l.el.style.display='';
+    l.el.style.left=s[0]+'px'; l.el.style.top=s[1]+'px';
+  }
+}
+
+/* ---------------- panel content (all real numbers) ---------------- */
+const fmt=(x,d)=>Number(x).toFixed(d===undefined?2:d);
+const F=H.features, NF=H.neighbor_features, EV=H.eval, ML=ANIM.ml, ST=ANIM.stats;
+const rise = (EV.pred_ridge_z - H.top13);
+const SEL = new Set(ML.selected_features);
+const featRows = [
+  ['footprint_area', F.footprint_area+' m²'],
+  ['footprint_perimeter', F.footprint_perimeter+' m'],
+  ['n_footprint_vertices', F.n_footprint_vertices],
+  ['aspect_ratio', F.aspect_ratio],
+  ['compactness', F.compactness],
+  ['rectangularity', F.rectangularity],
+  ['mbr_length', F.mbr_length+' m'],
+  ['mbr_width', F.mbr_width+' m'],
+  ['edge_length_ratio', F.edge_length_ratio],
+  ['building_height', F.building_height+' m'],
+  ['orientation', F.orientation+'°'],
+  ['longest_edge_length', F.longest_edge_length+' m'],
+  ['vol_lod13', H.vol_lod13+' m³'],
+];
+const PANELS = {
+  intro: ()=>`<div class="p-title">Tile ${ST.tile} · 3DBAG</div>
+    <table class="feat">
+      <tr class="in"><td>buildings in tile</td><td>${ST.n_buildings_tile.toLocaleString()}</td></tr>
+      <tr class="in"><td>LOD1.3 / LOD2.2 pairs</td><td>${ST.n_paired.toLocaleString()}</td></tr>
+      <tr class="in"><td>in scope, evaluated</td><td>${ST.n_evaluated}</td></tr>
+      <tr class="in"><td>full study</td><td>41 tiles · 15,944</td></tr>
+    </table>
+    <p class="p-note">A held-out test tile — the models trained on <b>28 other tiles</b> and have never seen this neighborhood. Each block is real LOD1.3 geometry: a footprint extruded to one height. That is the <b>only input</b> the pipeline gets.</p>`,
+  hero: ()=>`<div class="p-title">The chosen building</div>
+    <table class="feat">
+      <tr class="in"><td>BAG id</td><td style="font-size:10.5px">${H.id}</td></tr>
+      <tr class="in"><td>footprint</td><td>rectangular · 4 vertices</td></tr>
+      <tr class="in"><td>area</td><td>${F.footprint_area} m²</td></tr>
+      <tr class="in"><td>height (LOD1.3)</td><td>${F.building_height} m</td></tr>
+    </table>
+    <p class="p-note">Passes the scope filter: rectangular footprint, 10–500 m². What roof belongs on this block? In LOD1.3 <b>nobody can tell</b> — flat, gabled and hipped all produce this same box. Try the layer toggles below: footprint, walls, roof.</p>`,
+  features: ()=>`<div class="p-title">13 LOD1.3 features</div>
+    <table class="feat" id="feat-tbl">${featRows.map(([k,v])=>
+      `<tr class="${SEL.has(k)?'sel':''}"><td>${k}</td><td>${v}</td></tr>`).join('')}
+    </table>
+    <p class="p-note">★ = kept by consensus feature selection (Random-Forest importance + permutation importance + mutual information). Building height is the most informative feature across all three methods.</p>`,
+  classify: ()=>`<div class="p-title">Roof-type classification</div>
+    <table class="feat">
+      <tr><td>model families compared</td><td>5</td></tr>
+      <tr><td>tuning</td><td>GridSearchCV</td></tr>
+      <tr><td>best families (LOO-CV)</td><td>GBT 25/41 · RF 16/41 folds</td></tr>
+      <tr><td>overall accuracy (LOO-CV)</td><td>75.3%</td></tr>
+      <tr><td>overall accuracy (held-out)</td><td>68.1%</td></tr>
+      <tr><td>weighted F1 (held-out)</td><td>0.70</td></tr>
+    </table>
+    <div class="verdict" id="verdict1">PREDICTED : ${EV.predicted_type.toUpperCase()}<small>from the building's geometry alone</small></div>
+    <p class="p-note">Decision Tree, Random Forest, Gradient Boosted Trees, k-NN and MLP compete; <b>tree ensembles</b> come out on top. Gabled vs hipped is an information limit of LOD1.3 itself — identical block, different roof.</p>`,
+  regress: ()=>`<div class="p-title">Ridge regression</div>
+    <table class="feat">
+      <tr><td>regressor families compared</td><td>6</td></tr>
+      <tr><td>best for gabled</td><td>Random Forest</td></tr>
+      <tr><td>gabled folds won (LOO-CV)</td><td>41 / 41</td></tr>
+      <tr><td>ridge MAE (LOO-CV)</td><td>0.26 m</td></tr>
+      <tr><td>ridge MAE (held-out)</td><td>0.31 m</td></tr>
+    </table>
+    <div class="formula">ridge_height_ratio = <span class="hl">${fmt(H.ridge_ratio_pred,3)}</span><br>
+      ridge_z = ${fmt(H.ridge_ratio_pred,3)} × ${F.building_height} m<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= <span class="hl">${fmt(EV.pred_ridge_z)} m</span> above ground<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ ${fmt(rise)} m above the eaves</div>
+    <p class="p-note">The model predicts a dimensionless ratio, not coordinates — scale-invariant, so one model serves cottages and towers alike. The two ridge endpoints follow from the ratio + the footprint's long axis.</p>`,
+  construct: ()=>`<div class="p-title">Deterministic construction</div>
+    <div class="check"><span class="tick">✓</span><span>edges classified by <code>cross-product</code> side-of-ridge test</span></div>
+    <div class="check"><span class="tick">✓</span><span>2 ridge-parallel eaves · 2 gable ends</span></div>
+    <div class="check"><span class="tick">✓</span><span>2 sloped roof planes descend to the ridge</span></div>
+    <div class="check"><span class="tick">✓</span><span>2 gable walls rise to close the ends</span></div>
+    <div class="check"><span class="tick">✓</span><span>7 faces · outward normals enforced</span></div>
+    <div class="check"><span class="tick">✓</span><span>valid CityJSON <code>Solid</code> — by construction</span></div>
+    <p class="p-note">No ML here. Closed-form rules convert (type, ratio) into faces — with ridge clamping and a degenerate-height fallback, every accepted building yields a valid solid, whatever the ML predicted.</p>`,
+  verdict: ()=>`<div class="p-title">Reconstruction vs. ground truth</div>
+    <div class="big-metric">
+      <div class="bm"><div class="v">${(EV.ridge_err*100).toFixed(1)} cm</div><div class="k">ridge height error</div></div>
+      <div class="bm"><div class="v">${(EV.vol_rel_err*100).toFixed(1)}%</div><div class="k">volume error</div></div>
+    </div>
+    <table class="feat" style="margin-top:10px">
+      <tr class="in"><td>predicted ridge, above ground</td><td>${fmt(EV.pred_ridge_z)} m</td></tr>
+      <tr class="in"><td>actual ridge (LiDAR)</td><td>${fmt(EV.gt_ridge_z)} m</td></tr>
+      <tr class="in"><td>within 1 m tolerance</td><td>✓</td></tr>
+      <tr class="in"><td>within 20% volume</td><td>✓</td></tr>
+    </table>
+    <p class="p-note">The cyan wireframe is the real LOD2.2 (LiDAR-derived) from 3DBAG. The pipeline never saw it — reconstruction used footprint + height alone.</p>`,
+  finale: ()=>`<div class="p-title">Whole-neighborhood run</div>
+    <table class="feat">
+      <tr class="in"><td>roofs constructed here</td><td>${ST.n_recon_context}</td></tr>
+      <tr class="in"><td>tile accuracy</td><td>${(ST.tile_accuracy*100).toFixed(1)}%</td></tr>
+      <tr class="in"><td>held-out ridge MAE</td><td>0.31 m</td></tr>
+      <tr class="in"><td>within 1 m (held-out)</td><td>92.8%</td></tr>
+    </table>
+    <div class="legend">
+      <span class="lg"><i style="background:var(--flat)"></i>flat</span>
+      <span class="lg"><i style="background:var(--gabled)"></i>gabled</span>
+      <span class="lg"><i style="background:var(--hipped)"></i>hipped</span>
+      <span class="lg"><i style="background:#39445e"></i>out of scope</span>
+    </div>
+    <p class="p-note">Grey buildings were excluded by the scope filter — non-rectangular footprints, unsupported roof classes, or out-of-range size. Roofs are tinted by <b>predicted</b> type.</p>`,
+};
+
+/* ---------------- stages ---------------- */
+const STAGES=[
+ { id:'tile', step:'The starting point', title:'A city without roofs',
+   text:`A real Dutch neighborhood, the way most 3D city data looks today: every building is a flat-topped box. The roof shapes are missing — <b>and that's what we're going to rebuild</b>.`,
+   dur:9, panel:'intro',
+   camA:{target:[0,0,0], az:0.7, el:1.05, dist:680}, camB:{target:[0,0,6], az:1.25, el:0.78, dist:520} },
+
+ { id:'meet', step:'Our building', title:'Meet our building',
+   text:`One building, lifted out of the map. Everything the pipeline knows about it: <b>its footprint and its height</b>. No photos, no laser scans, nothing else. <b>Drag to look around — it's fully 3D.</b>`,
+   dur:8, panel:'hero',
+   camA:{target:[0,0,8], az:1.25, el:0.75, dist:420}, camB:{target:[0,0,14], az:2.1, el:0.42, dist:95} },
+
+ { id:'measure', step:'Step 1', title:'Measure everything',
+   text:`First, the block is measured — how long, how wide, how tall, how compact. <b>Thirteen simple numbers</b>, and they're all the information the pipeline will ever get.`,
+   dur:13, panel:'features',
+   camA:{target:[0,0,10], az:2.1, el:0.42, dist:95}, camB:{target:[0,0,4], az:2.9, el:0.95, dist:80},
+   enter(){
+     label('len', midEdge(0, 3.4), fmt(F.mbr_length,1)+' m');
+     label('wid', midEdge(1, 3.4), fmt(F.mbr_width,1)+' m');
+     const hc=H.fp[2];
+     label('hgt', [hc[0],hc[1],HTOP/2], fmt(F.building_height,1)+' m','dim');
+     label('area', [0,0,HTOP+1.4], fmt(F.footprint_area,1)+' m² · '+H.vol_lod13+' m³','amber');
+     setTimeout(()=>{document.querySelectorAll('#feat-tbl tr').forEach((tr,i)=>setTimeout(()=>tr.classList.add('in'), i*260));},350);
+   },
+   exit(){ clearLabels(); } },
+
+ { id:'classify', step:'Step 2', title:'Guess the roof',
+   text:`Which roof belongs on this block — flat, gabled, or hipped? A model trained on thousands of Dutch buildings reads the measurements and makes its call: <b>${EV.predicted_type.toUpperCase()}</b>.`,
+   dur:12, panel:'classify',
+   camA:{target:[0,0,16], az:2.9, el:0.42, dist:100}, camB:{target:[0,0,18], az:3.55, el:0.3, dist:85},
+   perFrame(t){ glyphPick = smooth(clamp((t-0.62)/0.22,0,1)); },
+   enter(){
+     glyphOn=true; glyphPick=0;
+     for(const g of glyphInfo){
+       label('gl'+g.type, [g.center[0],g.center[1],g.center[2]+3.6],
+             ['flat','gabled','hipped'][g.type], g.type===1?'amber':'dim');
+     }
+   },
+   exit(){ glyphOn=false; clearLabels(); } },
+
+ { id:'ridge', step:'Step 3', title:'Place the ridge',
+   text:`A gabled roof needs one more thing: <b>how high the ridge sits</b>. A second model predicts exactly that — two ridge points appear above the building, then join into the ridge line.`,
+   dur:11, panel:'regress',
+   camA:{target:[0,0,20], az:3.55, el:0.45, dist:95}, camB:{target:[0,0,22], az:4.9, el:0.28, dist:60},
+   perFrame(t){ beamT = smooth(clamp((t-0.38)/0.3,0,1)); },
+   enter(){
+     showRidgePts=true; beamT=0;
+     label('rp1', [RIDGE[0][0],RIDGE[0][1],RIDGE[0][2]+1.8], 'P₁ · '+fmt(EV.pred_ridge_z,2)+' m','amber');
+     label('rp2', [RIDGE[1][0],RIDGE[1][1],RIDGE[1][2]+1.8], 'P₂ · '+fmt(EV.pred_ridge_z,2)+' m','amber');
+   },
+   exit(){ clearLabels(); } },
+
+ { id:'construct', step:'Step 4', title:'Build the roof',
+   text:`No more predictions — from here it's pure geometry. Two roof planes and two gable ends fly in and <b>lock onto the block</b>. The flat box is now a real LOD2.2 building.`,
+   dur:11, panel:'construct',
+   camA:{target:[0,0,18], az:4.9, el:0.32, dist:75}, camB:{target:[0,0,16], az:6.15, el:0.42, dist:85},
+   perFrame(t){ roofT = clamp((t-0.06)/0.75,0,1); if(roofT>=1) lidOff=true; },
+   enter(){
+     roofT=0; roofOn=true; lidOff=false; beamT=1; showRidgePts=true;
+   },
+   exit(){ roofT=1; lidOff=true; showRidgePts=false; } },
+
+ { id:'verdict', step:'The test', title:'How close did we get?',
+   text:`The cyan wireframe is the <b>real roof</b>, measured by laser scanning. The pipeline never saw it — yet the ridge lands within <b>${(EV.ridge_err*100).toFixed(1)} cm</b>. Orbit around and check the fit.`,
+   dur:10, panel:'verdict',
+   camA:{target:[0,0,16], az:6.15, el:0.42, dist:85}, camB:{target:[0,0,15], az:7.05, el:0.3, dist:62},
+   enter(){ showGT=true; },
+   exit(){ showGT=false; } },
+
+ { id:'city', step:'The payoff', title:'Back into the map',
+   text:`Our building returns to its street — and the same models sweep the whole neighborhood, raising <b>${ST.n_recon_context} roofs</b> in seconds. From flat boxes to real roofs, <b>with no extra data</b>.`,
+   dur:15, panel:'finale',
+   camA:{target:[0,0,10], az:7.05, el:0.5, dist:120}, camB:{target:[0,0,0], az:8.35, el:0.9, dist:620},
+   perFrame(t){
+     finaleT = clamp((t-0.08)/0.75,0,1);
+     if(t>0.86) endcard(true);
+   },
+   exit(){ finaleMode=false; finaleT=0; endcard(false); } },
+];
+function midEdge(i, off){
+  const n=H.fp.length, p1=H.fp[i], p2=H.fp[(i+1)%n];
+  const mx=(p1[0]+p2[0])/2, my=(p1[1]+p2[1])/2;
+  const cx=H.fp.reduce((s,p)=>s+p[0],0)/n, cy=H.fp.reduce((s,p)=>s+p[1],0)/n;
+  const dx=mx-cx, dy=my-cy, dl=Math.hypot(dx,dy)||1;
+  return [mx+dx/dl*off, my+dy/dl*off, 0.4];
+}
+
+/* ---------------- stage machine + scene state ---------------- */
+let stageIdx=0, stageT=0, playing=true;
+let showGT=false, finaleMode=false;
+let roofOn=false, lidOff=false, beamT=0, showRidgePts=false;
+const layers={fp:true, walls:true, roof:true};
+['fp','walls','roof'].forEach(k=>{
+  document.getElementById('ly-'+k).addEventListener('change',e=>layers[k]=e.target.checked);
+});
+
+const chipsHost=document.getElementById('stages');
+STAGES.forEach((s,i)=>{
+  const b=document.createElement('button');
+  b.className='chip'; b.innerHTML=(i+1)+'. '+s.id+'<span class="bar"><i></i></span>';
+  b.onclick=()=>gotoStage(i);
+  chipsHost.appendChild(b);
+});
+const chips=[...chipsHost.children];
+
+function applyStageState(i){
+  /* 0 tile · 1 meet · 2 measure · 3 classify · 4 ridge · 5 construct · 6 verdict · 7 city */
+  glyphOn=false; glyphPick=0;
+  showGT = i===6;
+  finaleMode = i===7;
+  finaleT=0;
+  showRidgePts = i===4;
+  beamT = i===4 ? 0 : 1;
+  roofOn = i>=5;
+  roofT = i>=6 ? 1 : 0;
+  lidOff = i>=6;
+  heroPaint(i>0);
+  if(i===0) setCityMode('normal');        // the map, as-is
+  else if(i===1) setCityMode('ghost');    // building found in the map
+  else if(i===7) setCityMode('finale');   // building returns to the map
+  else setCityMode('hidden');             // building isolated
+}
+function gotoStage(i){
+  const prev=STAGES[stageIdx];
+  if(prev && prev.exit) prev.exit();
+  clearLabels();
+  stageIdx=(i+STAGES.length)%STAGES.length;
+  stageT=0;
+  const s=STAGES[stageIdx];
+  applyStageState(stageIdx);
+  if(s.enter) s.enter();
+  const cap=document.getElementById('caption');
+  cap.classList.add('swap');
+  setTimeout(()=>{
+    document.getElementById('cap-step').textContent=s.step;
+    document.getElementById('cap-title').textContent=s.title;
+    document.getElementById('cap-text').innerHTML=s.text;
+    cap.classList.remove('swap');
+  },380);
+  const pc=document.getElementById('panel-card');
+  pc.classList.add('swap');
+  setTimeout(()=>{
+    pc.innerHTML = s.panel ? PANELS[s.panel]() : '';
+    pc.classList.toggle('hidden', !s.panel);
+    pc.classList.remove('swap');
+    pc.querySelectorAll('table.feat tr:not(.in)').forEach((tr,ri)=>setTimeout(()=>tr.classList.add('in'), 150+ri*120));
+    pc.querySelectorAll('.hbar').forEach((el,i)=>setTimeout(()=>{
+      el.querySelector('.hb-fill').style.width=el.dataset.w+'%';}, 250+i*180));
+    pc.querySelectorAll('.check').forEach((el,i)=>setTimeout(()=>el.classList.add('in'), 250+i*580));
+    pc.querySelectorAll('.verdict').forEach(el=>setTimeout(()=>el.classList.add('in'), 2200));
+  },380);
+  chips.forEach((c,ci)=>{
+    c.classList.toggle('active',ci===stageIdx);
+    c.classList.toggle('done',ci<stageIdx);
+  });
+  endcard(false);
+}
+function endcard(on){ document.getElementById('endcard').classList.toggle('on',!!on); }
+
+document.getElementById('b-play').onclick=()=>{playing=!playing; document.getElementById('b-play').textContent=playing?'⏸':'▶';};
+document.getElementById('b-prev').onclick=()=>gotoStage(stageIdx-1);
+document.getElementById('b-next').onclick=()=>gotoStage(stageIdx+1);
+document.getElementById('b-replay').onclick=()=>{gotoStage(0); playing=true; document.getElementById('b-play').textContent='⏸';};
+addEventListener('keydown',e=>{
+  if(e.key===' '){e.preventDefault(); document.getElementById('b-play').click();}
+  if(e.key==='ArrowRight') gotoStage(stageIdx+1);
+  if(e.key==='ArrowLeft') gotoStage(stageIdx-1);
+});
+
+/* ---------------- render loop ---------------- */
+function resize(){
+  const dpr=Math.min(devicePixelRatio||1,2);
+  canvas.width=innerWidth*dpr; canvas.height=innerHeight*dpr;
+  canvas.style.width=innerWidth+'px'; canvas.style.height=innerHeight+'px';
+  gl.viewport(0,0,canvas.width,canvas.height);
+}
+addEventListener('resize',resize); resize();
+gl.enable(gl.DEPTH_TEST);
+gl.clearColor(0,0,0,0);
+
+let last=performance.now(), lastBeam=-1;
+function frame(now){
+  const dt=Math.min(0.05,(now-last)/1000); last=now;
+  const s=STAGES[stageIdx];
+  if(playing){
+    stageT+=dt/s.dur;
+    /* gently release manual camera offsets while auto-playing */
+    if(!drag) userFade=Math.max(0, userFade-dt/2.5);
+    if(stageT>=1){
+      if(stageIdx===STAGES.length-1){ stageT=1; playing=false; document.getElementById('b-play').textContent='▶'; endcard(true); }
+      else gotoStage(stageIdx+1);
+    }
+  }
+  if(userFade<=0.001){ userAz=0; userEl=0; userZoom=1; userPan=[0,0,0]; }
+  const t=clamp(stageT,0,1);
+  if(s.perFrame) s.perFrame(t);
+  cam=camEval(s.camA,s.camB,t);
+  updateMatrices();
+  cityColStep(dt);
+  roofApply();
+  if(glyphOn) glyphFrame(now);
+  if(beamT!==lastBeam){ buildBeam(beamT); lastBeam=beamT; }
+
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  fDraw(groundB); fDraw(gridB);
+  const cityGone = (cityMode==='hidden' && cityMixT>=1);
+  if(!cityGone){
+    batchDraw(cityB, 0, 1, 0, finaleMode? plainCount : cityB.n);
+    if(finaleMode) batchDraw(reconB, finaleT, 0.32);
+    fDraw(outlineB);
+  }
+
+  /* hero building, layer by layer */
+  if(layers.fp){ batchDraw(fpFillB,0,1); fDraw(fpLineB, 1+0.15*Math.sin(now/500)); }
+  if(layers.walls){ batchDraw(wallB,0,1); if(!lidOff) batchDraw(lidB,0,1); }
+  if(layers.roof && roofOn) roofB.draw();
+
+  if(stageIdx===2){ fDraw(cageB, 1+0.22*Math.sin(now/300)); }
+  if(glyphOn) glyphB.draw(1, true);
+  if(showRidgePts){
+    fDraw(ridgeMarkB, 1.1+0.35*Math.sin(now/240));
+    if(beamT>0.01) fDraw(ridgeBeamB, 1.15+0.3*Math.sin(now/260));
+  }
+  if(showGT){ gl.disable(gl.DEPTH_TEST); fDraw(gtB); gl.enable(gl.DEPTH_TEST); }
+
+  const bar=chips[stageIdx].querySelector('.bar i');
+  if(bar) bar.style.width=(t*100)+'%';
+  updateLabels();
+  requestAnimationFrame(frame);
+}
+gotoStage(0);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
