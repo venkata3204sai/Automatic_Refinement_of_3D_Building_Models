@@ -18,6 +18,7 @@ and building height.
 > [venkata3204sai.github.io/LoD1-to-LoD2-roof-reconstruction/animation](https://venkata3204sai.github.io/LoD1-to-LoD2-roof-reconstruction/animation/)
 > (or open [docs/animation/index.html](docs/animation/index.html) locally in
 > any browser).
+> *Animation generated using Claude's Fable model by Anthropic.*
 
 ## Contents
 
