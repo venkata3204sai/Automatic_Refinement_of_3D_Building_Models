@@ -15,7 +15,7 @@ and building height.
 
 > 🎬 **An interactive 3D animation of the pipeline is available** — watch a
 > real building go from LOD1.3 block to LOD2.2 roof, step by step:
-> [venkata3204sai.github.io/Automatic_Refinement_of_3D_Building_Models/animation](https://venkata3204sai.github.io/Automatic_Refinement_of_3D_Building_Models/animation/)
+> [venkata3204sai.github.io/LoD1-to-LoD2-roof-reconstruction/animation](https://venkata3204sai.github.io/LoD1-to-LoD2-roof-reconstruction/animation/)
 > (or open [docs/animation/index.html](docs/animation/index.html) locally in
 > any browser).
 
